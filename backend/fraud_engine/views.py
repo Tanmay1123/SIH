@@ -15,6 +15,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from core.models import Company, Invoice
+from core.views import StandardPagination
 
 from . import ledger
 from .cycle_detection import detect_rings
@@ -129,6 +130,7 @@ class FlaggedRingListView(generics.ListAPIView):
     """GET /api/fraud/rings/ — flagged rings, highest risk first."""
 
     serializer_class = FlaggedRingSerializer
+    pagination_class = StandardPagination
 
     def get_queryset(self):
         qs = FlaggedRing.objects.all().order_by("-risk_score", "id")

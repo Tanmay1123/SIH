@@ -12,11 +12,14 @@ from .serializers import (
 
 class StandardPagination(PageNumberPagination):
     """
-    Default pagination for the whole API.
+    Pagination for list endpoints, with a client-controlled `?page_size=`
+    (capped at 500) so the dashboard can fetch a whole feed in one request
+    instead of stitching pages together in the browser.
 
-    `?page_size=` is enabled (capped at 500) so the dashboard can fetch the
-    complete alerts feed in a single request rather than stitching pages
-    together in the browser.
+    Applied per-view rather than as REST_FRAMEWORK's DEFAULT_PAGINATION_CLASS:
+    rest_framework.generics resolves that setting while its own module body is
+    still executing, so naming a class that lives in a module which imports
+    generics is a circular import.
     """
 
     page_size = 50
@@ -28,6 +31,7 @@ class CompanyListView(generics.ListAPIView):
     """GET /api/companies/ — paginated company list, optional ?search= by name/GSTIN."""
 
     serializer_class = CompanySerializer
+    pagination_class = StandardPagination
 
     def get_queryset(self):
         qs = Company.objects.all()
@@ -54,6 +58,7 @@ class InvoiceListView(generics.ListAPIView):
     """
 
     serializer_class = InvoiceSerializer
+    pagination_class = StandardPagination
 
     def get_queryset(self):
         qs = Invoice.objects.select_related("seller", "buyer")

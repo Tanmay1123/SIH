@@ -119,10 +119,14 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Django REST Framework
 # ---------------------------------------------------------------------------
 REST_FRAMEWORK = {
-    # Custom class so clients can pass ?page_size=, which lets the dashboard
-    # pull the whole alerts feed in one request instead of paging through it.
-    "DEFAULT_PAGINATION_CLASS": "core.views.StandardPagination",
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
+    # NOTE: list views that need a client-controlled ?page_size= set
+    # `pagination_class = StandardPagination` on themselves (see core/views.py).
+    # It cannot be wired up here: rest_framework.generics reads
+    # DEFAULT_PAGINATION_CLASS while its own module body is executing, so
+    # pointing this at a class in an app module that imports generics is a
+    # circular import.
     "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
 }

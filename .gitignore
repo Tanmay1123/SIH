@@ -1,0 +1,46 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# ---------- Django ----------
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+media/
+
+# ---------- Node / React ----------
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+
+# ---------- Environment ----------
+# The real .env is machine-specific and may hold secrets: never commit it.
+# .env.example IS committed (see the negation below) so a fresh clone knows
+# exactly which variables it needs.
+.env
+.env.local
+!.env.example
+
+# ---------- OS / editor cruft ----------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ---------- ML model artifacts ----------
+# Large binary model blobs are build output and stay out of git.
+*.pkl
+*.joblib
+# EXCEPTION: backend/fraud_engine/models_artifacts/ holds the small *pretrained*
+# risk model that ships with the repo. It is committed on purpose so the project
+# scores rings immediately after `git clone` without anyone having to run
+# `manage.py train_risk_model` first. The artifact is stored as XGBoost's native
+# JSON format (not a pickle), which keeps it small, human-inspectable and
+# portable across xgboost versions.
+!backend/fraud_engine/models_artifacts/
+!backend/fraud_engine/models_artifacts/**

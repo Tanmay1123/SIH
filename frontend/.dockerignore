@@ -1,0 +1,11 @@
+# Never copy host-installed dependencies into the image.
+# node_modules built on the host contains platform-native binaries (esbuild,
+# rollup). Copying a Windows or macOS build into a Linux container overwrites
+# the correct ones installed by `npm install` in the Dockerfile and the dev
+# server fails to start.
+node_modules
+dist
+.vite
+npm-debug.log*
+.env
+.env.local

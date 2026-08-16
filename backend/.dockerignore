@@ -1,0 +1,11 @@
+# Host-only artefacts that must not leak into the image.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+# A local SQLite database from a no-Docker run; the container uses PostgreSQL.
+db.sqlite3
+staticfiles/
+media/
+.env
+.env.local

@@ -1,5 +1,6 @@
 from django.db.models import Q
 from rest_framework import generics
+from rest_framework.pagination import PageNumberPagination
 
 from .models import Company, Invoice
 from .serializers import (
@@ -7,6 +8,20 @@ from .serializers import (
     CompanySerializer,
     InvoiceSerializer,
 )
+
+
+class StandardPagination(PageNumberPagination):
+    """
+    Default pagination for the whole API.
+
+    `?page_size=` is enabled (capped at 500) so the dashboard can fetch the
+    complete alerts feed in a single request rather than stitching pages
+    together in the browser.
+    """
+
+    page_size = 50
+    page_size_query_param = "page_size"
+    max_page_size = 500
 
 
 class CompanyListView(generics.ListAPIView):

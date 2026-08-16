@@ -15,8 +15,9 @@ from django.test import TestCase
 
 from core.management.commands.seed_demo_data import build_synthetic_network
 from core.models import Company, Invoice
-from fraud_engine import cycle_detection, risk_scoring
+from fraud_engine import cycle_detection, ledger, risk_scoring
 from fraud_engine.graph_builder import build_graph, build_graph_from_dataframes
+from fraud_engine.models import LedgerBlock
 
 
 def dataframes_from_network(net) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -341,3 +342,121 @@ class RiskScoringTests(TestCase):
         features = risk_scoring.engineer_features(empty, empty, [])
 
         self.assertTrue(features.empty)
+
+
+class LedgerTests(TestCase):
+    """The audit chain must be genuinely tamper-evident, not decoratively so."""
+
+    def test_first_block_links_to_genesis(self):
+        block = ledger.append_block({"ring": 1})
+
+        self.assertEqual(block.index, 0)
+        self.assertEqual(block.previous_hash, ledger.GENESIS_PREVIOUS_HASH)
+
+    def test_blocks_chain_to_their_predecessor(self):
+        first = ledger.append_block({"ring": 1})
+        second = ledger.append_block({"ring": 2})
+        third = ledger.append_block({"ring": 3})
+
+        self.assertEqual(second.previous_hash, first.hash)
+        self.assertEqual(third.previous_hash, second.hash)
+        self.assertEqual([first.index, second.index, third.index], [0, 1, 2])
+
+    def test_empty_chain_is_valid(self):
+        report = ledger.verify_chain()
+
+        self.assertTrue(report["valid"])
+        self.assertEqual(report["block_count"], 0)
+
+    def test_untouched_chain_verifies(self):
+        for i in range(5):
+            ledger.append_block({"ring": i, "risk_score": 90 + i})
+
+        report = ledger.verify_chain()
+
+        self.assertTrue(report["valid"])
+        self.assertEqual(report["block_count"], 5)
+        self.assertEqual(report["head_hash"], LedgerBlock.objects.order_by("-index").first().hash)
+
+    def test_hashing_is_deterministic_regardless_of_key_order(self):
+        """Re-serialising the same evidence must not look like tampering."""
+        a = ledger.compute_hash(0, "2026-01-01T00:00:00", {"x": 1, "y": 2}, "0" * 64)
+        b = ledger.compute_hash(0, "2026-01-01T00:00:00", {"y": 2, "x": 1}, "0" * 64)
+
+        self.assertEqual(a, b)
+
+    def test_tampering_with_a_payload_is_detected(self):
+        """The headline guarantee: you cannot quietly edit a past finding."""
+        for i in range(4):
+            ledger.append_block({"ring": i, "risk_score": 95.0})
+
+        # Someone edits a historical block directly in the database, exactly as
+        # an UPDATE statement would - and does not touch any hash.
+        victim = LedgerBlock.objects.get(index=1)
+        victim.payload = {"ring": 1, "risk_score": 12.0}
+        victim.save(update_fields=["payload"])
+
+        report = ledger.verify_chain()
+
+        self.assertFalse(report["valid"])
+        self.assertEqual(report["broken_at_index"], 1)
+        self.assertIn("altered", report["message"])
+
+    def test_tampering_with_a_timestamp_is_detected(self):
+        for i in range(3):
+            ledger.append_block({"ring": i})
+
+        victim = LedgerBlock.objects.get(index=2)
+        victim.timestamp = victim.timestamp - timedelta(days=365)
+        victim.save(update_fields=["timestamp"])
+
+        report = ledger.verify_chain()
+
+        self.assertFalse(report["valid"])
+        self.assertEqual(report["broken_at_index"], 2)
+
+    def test_deleting_a_block_is_detected(self):
+        for i in range(4):
+            ledger.append_block({"ring": i})
+
+        LedgerBlock.objects.get(index=1).delete()
+
+        report = ledger.verify_chain()
+
+        self.assertFalse(report["valid"])
+
+    def test_a_broken_link_is_detected_even_if_the_block_rehashes(self):
+        """
+        Recomputing one block's own hash is not enough to hide an edit: the
+        NEXT block still commits to the old hash, so the break surfaces there.
+        """
+        for i in range(3):
+            ledger.append_block({"ring": i})
+
+        victim = LedgerBlock.objects.get(index=1)
+        victim.payload = {"ring": "edited"}
+        # The forger is careful and fixes this block's own hash...
+        victim.hash = ledger.compute_hash(
+            victim.index, victim.timestamp.isoformat(), victim.payload, victim.previous_hash
+        )
+        victim.save(update_fields=["payload", "hash"])
+
+        report = ledger.verify_chain()
+
+        # ...but block #2 still points at the pre-edit hash.
+        self.assertFalse(report["valid"])
+        self.assertEqual(report["broken_at_index"], 2)
+
+    def test_payload_survives_a_round_trip(self):
+        payload = {
+            "record_type": "confirmed_fraud_ring",
+            "company_ids": [4, 9, 17],
+            "risk_score": 98.6,
+            "explanation": [{"feature": "eway_missing_ratio", "text": "No e-way bills."}],
+        }
+
+        block = ledger.append_block(payload)
+        stored = LedgerBlock.objects.get(index=block.index)
+
+        self.assertEqual(stored.payload, payload)
+        self.assertTrue(ledger.verify_chain()["valid"])

@@ -1,0 +1,44 @@
+{
+  "feature_names": [
+    "days_since_registration",
+    "declared_turnover_log",
+    "sales_value_log",
+    "purchase_value_log",
+    "turnover_to_invoice_ratio",
+    "itc_velocity",
+    "pass_through_ratio",
+    "eway_missing_ratio",
+    "shared_address_count",
+    "shared_director_count",
+    "counterparty_count",
+    "round_amount_ratio",
+    "invoice_burst_ratio",
+    "in_cycle_count",
+    "min_cycle_length",
+    "min_cycle_amount_cv",
+    "max_cycle_value_log"
+  ],
+  "trained_at": "2026-08-16",
+  "metrics": {
+    "trained_on_networks": [
+      101,
+      202,
+      303,
+      404,
+      505,
+      606,
+      707,
+      808
+    ],
+    "holdout_networks": [
+      909,
+      1010
+    ],
+    "train_rows": 680,
+    "train_positives": 305,
+    "holdout_rows": 173,
+    "holdout_positives": 77,
+    "holdout_roc_auc": 0.9999,
+    "holdout_avg_precision": 0.9998
+  }
+}

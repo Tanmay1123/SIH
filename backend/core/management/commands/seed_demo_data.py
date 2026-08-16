@@ -116,6 +116,13 @@ def _random_date(rng: random.Random, start: date, end: date) -> date:
     return start + timedelta(days=rng.randint(0, max(span, 0)))
 
 
+def _log_uniform(rng: random.Random, low: float, high: float) -> float:
+    """Draw uniformly on a log scale, giving a realistic heavy-tailed spread."""
+    import math
+
+    return math.exp(rng.uniform(math.log(low), math.log(high)))
+
+
 # --------------------------------------------------------------------------
 # Company builders
 # --------------------------------------------------------------------------
@@ -123,11 +130,21 @@ def _random_date(rng: random.Random, start: date, end: date) -> date:
 
 def _build_legit_company(rng: random.Random, fake: Faker, tier: int, today: date) -> dict:
     pan = _make_pan(rng)
-    # Established businesses: registered 1.5 - 12 years ago.
-    registered = today - timedelta(days=rng.randint(550, 4400))
-    # Turnover scales up the supply chain.
+    # Most honest businesses are established: registered 1.5 - 12 years ago.
+    # But a genuine minority are brand-new startups. They exist here on purpose:
+    # if every young company were a shell, "recently registered" alone would
+    # convict, and the detector would flag every real new business in India.
+    if rng.random() < 0.14:
+        registered = today - timedelta(days=rng.randint(70, 520))
+        turnover_scale = rng.uniform(0.08, 0.35)
+    else:
+        registered = today - timedelta(days=rng.randint(550, 4400))
+        turnover_scale = rng.uniform(0.45, 2.4)
+
+    # Provisional only: step 6 of the generator overwrites this with what the
+    # company actually traded, because honest filers declare roughly that.
     base_turnover = {0: 4.5e7, 1: 6.5e7, 2: 9.0e7, 3: 5.5e7}[tier]
-    turnover = base_turnover * rng.uniform(0.45, 2.4)
+    turnover = base_turnover * turnover_scale
     return {
         "gstin": _make_gstin(rng, pan),
         "pan": pan,
@@ -138,6 +155,17 @@ def _build_legit_company(rng: random.Random, fake: Faker, tier: int, today: date
         "declared_turnover": round(turnover, 2),
         "_tier": tier,
         "_is_fraud": False,
+        # Compliance is not uniform among honest taxpayers. Most are diligent,
+        # but a real minority - small firms, poor back-office - routinely skip
+        # e-way bills. Without them, "missing e-way bill" would be a perfect
+        # fraud tell here and a source of false accusations in the field.
+        "_eway_rate": rng.uniform(0.55, 0.82) if rng.random() < 0.18 else rng.uniform(0.9, 0.99),
+        # Seasonal businesses (agri-produce, festival goods) concentrate their
+        # entire year of invoicing into a few months. The offset is fixed per
+        # company so all its invoices land in the SAME window - otherwise the
+        # burst never materialises and only shells ever look bursty.
+        "_season_offset": rng.random() if rng.random() < 0.3 else None,
+        "_season_days": rng.randint(60, 130),
     }
 
 
@@ -163,6 +191,10 @@ def _build_shell_company(
         "declared_turnover": round(turnover, 2),
         "_tier": None,
         "_is_fraud": True,
+        # Shells are sloppy about e-way bills; "hard" rings override this when
+        # the ring is built.
+        "_eway_rate": rng.uniform(0.05, 0.25),
+        "_season_offset": None,
     }
 
 
@@ -176,6 +208,7 @@ def build_synthetic_network(
     n_companies: int = 220,
     n_fraud_rings: int = 7,
     n_benign_pairs: int = 10,
+    n_benign_distributor_pairs: int = 6,
     n_benign_triangles: int = 4,
     today: date | None = None,
 ) -> SyntheticNetwork:
@@ -249,32 +282,74 @@ def build_synthetic_network(
             net.companies[a]["registered_date"],
             net.companies[b]["registered_date"],
         ) + timedelta(days=5)
-        return (min(start, today - timedelta(days=1)), today)
+        start = min(start, today - timedelta(days=1))
+
+        # A seasonal seller squeezes its whole year into one trading window.
+        offset = net.companies[a].get("_season_offset")
+        span = (today - start).days
+        if offset is not None and span > 150:
+            season_days = net.companies[a].get("_season_days", 110)
+            season_start = start + timedelta(days=int(offset * max(span - season_days, 1)))
+            return (season_start, min(season_start + timedelta(days=season_days), today))
+        return (start, today)
 
     # ---- 3. legitimate trade: strictly tier-increasing, therefore acyclic --
-    tier_amounts = {0: (80_000, 900_000), 1: (150_000, 1_600_000),
-                    2: (200_000, 2_400_000)}
-    for tier in (0, 1, 2):
+    # Value enters at tier 0 and flows upward, each intermediary reselling
+    # roughly what it bought plus a margin. Modelling it as a budget rather
+    # than as independent random amounts matters: it means an honest
+    # distributor's sales actually track its purchases, the way a real one's
+    # do. Draw both sides independently and every mid-chain company looks
+    # wildly unbalanced, which would hand the model a free giveaway feature.
+    inflow: dict[int, float] = {}
+
+    def emit_sales(seller: int, tier: int, budget: float) -> None:
+        candidates = list(tiers[tier + 1])
+        if tier + 2 <= 3:
+            candidates += list(tiers[tier + 2])
+        buyers = rng.sample(candidates, min(rng.randint(3, 9), len(candidates)))
+
+        # Split the budget into invoices with uneven, realistic-looking shares.
+        legs = [(buyer, rng.randint(1, 6)) for buyer in buyers]
+        weights = [rng.uniform(0.5, 1.5) for _ in legs]
+        total_weight = sum(w * n for (_, n), w in zip(legs, weights))
+
+        for (buyer, count), weight in zip(legs, weights):
+            start, end = trade_window(seller, buyer)
+            for _ in range(count):
+                amount = budget * (weight / total_weight) * rng.uniform(0.85, 1.15)
+                if amount < 5_000:
+                    continue
+                inflow[buyer] = inflow.get(buyer, 0.0) + amount
+                add_invoice(
+                    seller,
+                    buyer,
+                    amount,
+                    _random_date(rng, start, end),
+                    rng.choice(TIER_GOODS[tier]),
+                    rng.random() < net.companies[seller]["_eway_rate"],
+                )
+
+    # Tier 0 originates value. Budgets are drawn log-uniformly across two
+    # orders of magnitude because real economies are heavy-tailed: a handful of
+    # large traders move crores while most move lakhs. A narrow uniform range
+    # would make "trades a lot" a perfect proxy for fraud.
+    for seller in tiers[0]:
+        emit_sales(seller, 0, _log_uniform(rng, 4e5, 6e7))
+
+    # Tiers 1 and 2 resell what they bought. The margin sometimes lands at or
+    # below 1.0 on purpose: commission agents and consignment traders really do
+    # pass value straight through, and they are the honest businesses most
+    # easily mistaken for conduits. The model has to learn to tell them apart.
+    for tier in (1, 2):
         for seller in tiers[tier]:
-            # Sell mostly one tier up, occasionally skip a tier.
-            candidates = list(tiers[tier + 1])
-            if tier + 2 <= 3:
-                candidates += list(tiers[tier + 2])
-            n_partners = rng.randint(3, 9)
-            for buyer in rng.sample(candidates, min(n_partners, len(candidates))):
-                lo, hi = tier_amounts[tier]
-                start, end = trade_window(seller, buyer)
-                for _ in range(rng.randint(1, 6)):
-                    amount = rng.uniform(lo, hi)
-                    add_invoice(
-                        seller,
-                        buyer,
-                        amount,
-                        _random_date(rng, start, end),
-                        rng.choice(TIER_GOODS[tier]),
-                        # Honest trade nearly always carries an e-way bill.
-                        rng.random() < 0.94,
-                    )
+            purchased = inflow.get(seller, 0.0)
+            budget = (
+                purchased * rng.uniform(0.98, 1.45)
+                if purchased > 0
+                # Sourced from outside the modelled network.
+                else rng.uniform(300_000, 2_000_000)
+            )
+            emit_sales(seller, tier, budget)
 
     # ---- 4. benign reciprocal loops (genuine two-way trade) --------------
     # These are the "false positives" that cycle detection alone would flag.
@@ -292,59 +367,114 @@ def build_synthetic_network(
         if supplier in used_in_loops or retailer in used_in_loops:
             continue
         start, end = trade_window(retailer, supplier)
+        forward = rng.uniform(400_000, 1_800_000)
         # Ensure the forward leg exists so the pair really trades both ways.
-        add_invoice(supplier, retailer, rng.uniform(400_000, 1_800_000),
-                    _random_date(rng, start, end), rng.choice(TIER_GOODS[2]), True)
-        # Reverse leg is genuinely small: returns and scrap, not value recycling.
+        add_invoice(supplier, retailer, forward,
+                    _random_date(rng, start, end), rng.choice(TIER_GOODS[2]),
+                    rng.random() < net.companies[supplier]["_eway_rate"])
+        # Usually the reverse leg is small (returns and scrap). Sometimes it is
+        # a balanced consignment swap, which looks a lot like value recycling
+        # on paper - a genuinely hard case for the model rather than a freebie.
+        balanced = rng.random() < 0.35
         for _ in range(rng.randint(1, 3)):
+            reverse = (
+                forward * rng.uniform(0.9, 1.1) if balanced
+                else rng.uniform(25_000, 180_000)
+            )
             add_invoice(
                 retailer,
                 supplier,
-                rng.uniform(25_000, 180_000),
+                reverse,
                 _random_date(rng, start, end),
                 rng.choice(RECIPROCAL_GOODS),
-                rng.random() < 0.9,
+                rng.random() < net.companies[retailer]["_eway_rate"],
             )
         used_in_loops.update({supplier, retailer})
         net.benign_loops.append([supplier, retailer])
 
-    # 4b. Mutual stock transfers between three retailers -> clean 3-cycles.
-    free_retailers = [i for i in retailer_pool if i not in used_in_loops]
-    for k in range(n_benign_triangles):
-        if len(free_retailers) < 3:
+    # 4b. Two distributors genuinely trading both ways. These are the hardest
+    #     honest cases in the whole dataset: both sides buy and sell heavily,
+    #     so the flow is balanced and the loop is tight - structurally almost
+    #     indistinguishable from a shell pair. Only the boring evidence
+    #     separates them: real turnover, years of history, e-way bills,
+    #     unrelated directors and addresses.
+    distributor_pool = [i for i in tiers[2] if i not in used_in_loops]
+    rng.shuffle(distributor_pool)
+    for _ in range(n_benign_distributor_pairs):
+        if len(distributor_pool) < 2:
             break
-        trio = [free_retailers.pop() for _ in range(3)]
-        for a, b in zip(trio, trio[1:] + trio[:1]):
-            start, end = trade_window(a, b)
-            add_invoice(
-                a,
-                b,
-                rng.uniform(60_000, 400_000),
-                _random_date(rng, start, end),
-                rng.choice(RECIPROCAL_GOODS),
-                rng.random() < 0.88,
-            )
-        used_in_loops.update(trio)
-        net.benign_loops.append(trio)
+        a, b = distributor_pool.pop(), distributor_pool.pop()
+        base = _log_uniform(rng, 4e5, 1.2e7)
+        for _ in range(rng.randint(2, 4)):
+            for seller, buyer in ((a, b), (b, a)):
+                start, end = trade_window(seller, buyer)
+                add_invoice(
+                    seller,
+                    buyer,
+                    base * rng.uniform(0.9, 1.1),
+                    _random_date(rng, start, end),
+                    rng.choice(TIER_GOODS[2]),
+                    rng.random() < net.companies[seller]["_eway_rate"],
+                )
+        used_in_loops.update({a, b})
+        net.benign_loops.append([a, b])
+
+    # 4c. Mutual stock transfers between three retailers -> clean 3-cycles.
+    free_retailers = [i for i in retailer_pool if i not in used_in_loops]
+    for _ in range(n_benign_triangles):
+        size = rng.randint(3, 5)
+        if len(free_retailers) < size:
+            break
+        group = [free_retailers.pop() for _ in range(size)]
+        # Mutual stock transfers move comparable value in each direction, so
+        # these loops have nearly-uniform hop amounts - structurally the same
+        # tell as circular billing. Their sizes overlap fraud ring sizes too,
+        # so loop geometry alone decides nothing; the model has to separate
+        # them on turnover, e-way bills, shared directors and company age.
+        base = _log_uniform(rng, 8e4, 3e6)
+        for _ in range(rng.randint(1, 3)):
+            for a, b in zip(group, group[1:] + group[:1]):
+                start, end = trade_window(a, b)
+                add_invoice(
+                    a,
+                    b,
+                    base * rng.uniform(0.94, 1.06),
+                    _random_date(rng, start, end),
+                    rng.choice(RECIPROCAL_GOODS),
+                    rng.random() < net.companies[a]["_eway_rate"],
+                )
+        used_in_loops.update(group)
+        net.benign_loops.append(group)
 
     # ---- 5. fraud rings: closed circular trade between shells ------------
     for ring in net.fraud_rings:
         hard_ring = net.companies[ring[0]]["_hard_ring"]
 
-        # The whole ring churns inside a short window - shells are disposable.
+        # Rings churn faster than honest trade, but not all of them are
+        # short-lived: some operate for the best part of a year before anyone
+        # notices. Spanning 45 days to 10 months keeps "traded in a burst" a
+        # useful hint rather than a giveaway.
         latest_reg = max(net.companies[i]["registered_date"] for i in ring)
-        window_start = max(latest_reg + timedelta(days=7), today - timedelta(days=300))
+        window_start = max(latest_reg + timedelta(days=7), today - timedelta(days=400))
         window_start = min(window_start, today - timedelta(days=40))
-        window_end = min(window_start + timedelta(days=rng.randint(45, 120)), today)
+        window_days = rng.randint(45, 300)
+        window_end = min(window_start + timedelta(days=window_days), today)
 
         # Value circles the loop almost unchanged: nothing is really produced.
-        base_amount = rng.uniform(2.2e6, 9.5e6)
+        # The range overlaps what honest distributors move, so scale alone
+        # cannot identify a ring - only the combination of evidence can.
+        base_amount = _log_uniform(rng, 6e5, 1.4e7)
         n_rotations = rng.randint(2, 4)
+
+        # Rings fabricate a small margin at each hop so the paperwork does not
+        # look mechanically identical. It is still far tighter than the spread
+        # of genuine trade, but it is not a giveaway either.
+        hop_spread = rng.uniform(0.02, 0.08)
 
         for _ in range(n_rotations):
             amount = base_amount * rng.uniform(0.97, 1.03)
             for a, b in zip(ring, ring[1:] + ring[:1]):
-                hop = amount * rng.uniform(0.985, 1.015)
+                hop = amount * rng.uniform(1 - hop_spread, 1 + hop_spread)
                 if not hard_ring:
                     # Suspiciously round figures are a common shell-invoice tell.
                     hop = round(hop, -4)
@@ -359,20 +489,45 @@ def build_synthetic_network(
                     rng.random() < (0.75 if hard_ring else 0.12),
                 )
 
-        # A thin layer of ordinary-looking trade so the shells are not obviously
+        # A layer of ordinary-looking trade so the shells are not obviously
         # isolated. Buying only from tier 0 and selling only to tier 3 keeps the
         # ring's strongly connected component exactly equal to the ring itself.
+        # Ring members deal with enough outside parties that a thin address
+        # book alone will not identify them.
         for member in ring:
-            for supplier in rng.sample(tiers[0], rng.randint(1, 3)):
+            for supplier in rng.sample(tiers[0], rng.randint(2, 6)):
                 start, end = trade_window(supplier, member)
                 add_invoice(supplier, member, rng.uniform(50_000, 300_000),
                             _random_date(rng, start, end),
-                            rng.choice(TIER_GOODS[0]), rng.random() < 0.8)
-            for customer in rng.sample(tiers[3], rng.randint(1, 3)):
+                            rng.choice(TIER_GOODS[0]),
+                            rng.random() < net.companies[supplier]["_eway_rate"])
+            for customer in rng.sample(tiers[3], rng.randint(2, 6)):
                 start, end = trade_window(member, customer)
                 add_invoice(member, customer, rng.uniform(40_000, 250_000),
                             _random_date(rng, start, end),
                             rng.choice(TIER_GOODS[2]), rng.random() < 0.8)
+
+    # ---- 6. make honest turnover declarations match reality ---------------
+    # An honest business declares roughly what it actually traded. Leaving the
+    # declaration as an independent random draw would make "declared turnover
+    # vs invoice value" separate the classes perfectly for the wrong reason.
+    # Shell declarations are left untouched - under-declaring while pushing
+    # crores of invoices IS the fraud.
+    sold: dict[int, float] = {}
+    bought: dict[int, float] = {}
+    for inv in net.invoices:
+        sold[inv["seller_idx"]] = sold.get(inv["seller_idx"], 0.0) + inv["amount"]
+        bought[inv["buyer_idx"]] = bought.get(inv["buyer_idx"], 0.0) + inv["amount"]
+
+    for idx, company in enumerate(net.companies):
+        if company["_is_fraud"]:
+            continue
+        # Retailers barely resell within the modelled network, so their
+        # turnover follows what they bought plus a retail margin.
+        traded = max(sold.get(idx, 0.0), bought.get(idx, 0.0) * rng.uniform(1.1, 1.4))
+        if traded <= 0:
+            continue
+        company["declared_turnover"] = round(traded * rng.uniform(0.85, 1.2), 2)
 
     return net
 

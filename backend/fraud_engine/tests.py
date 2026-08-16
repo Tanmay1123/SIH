@@ -9,12 +9,13 @@ One file, split into classes by concern:
 from datetime import date, timedelta
 
 import networkx as nx
+import numpy as np
 import pandas as pd
 from django.test import TestCase
 
 from core.management.commands.seed_demo_data import build_synthetic_network
 from core.models import Company, Invoice
-from fraud_engine import cycle_detection
+from fraud_engine import cycle_detection, risk_scoring
 from fraud_engine.graph_builder import build_graph, build_graph_from_dataframes
 
 
@@ -174,6 +175,23 @@ class CycleDetectionTests(TestCase):
         self.assertLess(evidence["amount_cv"], 0.01)
         self.assertEqual(evidence["eway_missing_ratio"], 1.0)
 
+    def test_detection_is_fast_enough_to_run_synchronously(self):
+        """
+        The SCC pre-filter is what makes a synchronous API call viable.
+        If this ever gets slow, the design decision to skip a job queue is
+        the thing that needs revisiting.
+        """
+        import time
+
+        net = build_synthetic_network(seed=42)
+        graph = graph_from_network(net)
+
+        started = time.perf_counter()
+        cycle_detection.find_cycles(graph)
+        elapsed = time.perf_counter() - started
+
+        self.assertLess(elapsed, 2.0, "cycle detection is too slow for a sync request")
+
     def test_self_invoices_are_not_rings(self):
         """A company invoicing itself is a data artefact, not a length-1 ring."""
         companies = pd.DataFrame([{
@@ -190,3 +208,136 @@ class CycleDetectionTests(TestCase):
         graph = build_graph_from_dataframes(companies, invoices)
 
         self.assertEqual(cycle_detection.find_cycles(graph), [])
+
+
+class RiskScoringTests(TestCase):
+    """Feature engineering, model inference and SHAP explanation."""
+
+    @classmethod
+    def setUpTestData(cls):
+        # Generating a network is the slow part, so do it once for the class.
+        cls.net = build_synthetic_network(seed=42)
+        cls.companies, cls.invoices = dataframes_from_network(cls.net)
+        cls.graph = build_graph_from_dataframes(cls.companies, cls.invoices)
+        cls.rings = cycle_detection.detect_rings(cls.graph)
+
+    def test_pretrained_artifact_is_present(self):
+        """A fresh clone must be able to score without training anything."""
+        self.assertTrue(
+            risk_scoring.MODEL_PATH.exists(),
+            "the committed pretrained model is missing from models_artifacts/",
+        )
+        self.assertIsNotNone(risk_scoring.load_model())
+
+    def test_feature_matrix_is_complete_and_finite(self):
+        features = risk_scoring.engineer_features(
+            self.companies, self.invoices, self.rings
+        )
+
+        self.assertEqual(list(features.columns), risk_scoring.FEATURE_NAMES)
+        self.assertEqual(len(features), len(self.companies))
+        self.assertFalse(features.isna().any().any(), "features contain NaN")
+        self.assertTrue(np.isfinite(features.values).all(), "features contain inf")
+
+    def test_shared_registration_details_are_counted(self):
+        """Shell rings reuse addresses; the feature must actually see that."""
+        features = risk_scoring.engineer_features(
+            self.companies, self.invoices, self.rings
+        )
+        shell_ids = self.net.fraud_company_indices
+
+        self.assertGreater(
+            features.loc[list(shell_ids), "shared_address_count"].max(),
+            0,
+            "no shell company shares an address with another",
+        )
+
+    def test_companies_outside_every_loop_score_zero(self):
+        """
+        The model only judges what cycle detection surfaced. A company in no
+        loop is not a circular-trade suspect and must not be given a score
+        by a model that never trained on such companies.
+        """
+        scores = risk_scoring.score_network(self.companies, self.invoices, self.rings)
+        candidates = risk_scoring.candidate_company_ids(self.rings)
+
+        outsiders = [cid for cid in scores.index if cid not in candidates]
+        self.assertTrue(outsiders, "expected some companies outside every loop")
+        for cid in outsiders:
+            self.assertEqual(scores.loc[cid, "score"], 0.0)
+
+    def test_scores_stay_in_range(self):
+        scores = risk_scoring.score_network(self.companies, self.invoices, self.rings)
+
+        self.assertGreaterEqual(scores["score"].min(), 0.0)
+        self.assertLessEqual(scores["score"].max(), 100.0)
+
+    def test_fraud_rings_outrank_benign_loops(self):
+        """
+        The headline claim of the whole ML stage: given a mixed bag of real
+        rings and genuine two-way trade, the real rings come out on top.
+        """
+        scores = risk_scoring.score_network(self.companies, self.invoices, self.rings)
+        fraud_sets = {frozenset(r) for r in self.net.fraud_rings}
+
+        ranked = sorted(
+            (
+                (risk_scoring.ring_risk(ring, scores)[0], frozenset(ring["company_ids"]))
+                for ring in self.rings
+            ),
+            key=lambda pair: -pair[0],
+        )
+
+        top = [key for _, key in ranked[: len(fraud_sets)]]
+        recovered = sum(1 for key in top if key in fraud_sets)
+
+        self.assertEqual(
+            recovered,
+            len(fraud_sets),
+            f"only {recovered}/{len(fraud_sets)} injected rings made the top of the queue",
+        )
+
+    def test_benign_loops_score_well_below_fraud_rings(self):
+        scores = risk_scoring.score_network(self.companies, self.invoices, self.rings)
+        fraud_sets = {frozenset(r) for r in self.net.fraud_rings}
+        benign_sets = {frozenset(r) for r in self.net.benign_loops}
+
+        fraud_scores, benign_scores = [], []
+        for ring in self.rings:
+            score = risk_scoring.ring_risk(ring, scores)[0]
+            key = frozenset(ring["company_ids"])
+            if key in fraud_sets:
+                fraud_scores.append(score)
+            elif key in benign_sets:
+                benign_scores.append(score)
+
+        self.assertGreater(min(fraud_scores), max(benign_scores))
+
+    def test_explanations_are_human_readable(self):
+        scores = risk_scoring.score_network(self.companies, self.invoices, self.rings)
+        worst = scores["score"].idxmax()
+        reasons = scores.loc[worst, "explanation"]
+
+        self.assertTrue(reasons)
+        for reason in reasons:
+            self.assertIn(reason["feature"], risk_scoring.FEATURE_NAMES)
+            self.assertIn(reason["direction"], {"increases_risk", "decreases_risk"})
+            # A sentence, not a variable name dumped to screen.
+            self.assertGreater(len(reason["text"]), 25)
+            self.assertIn(" ", reason["text"])
+
+    def test_ring_explanation_summarises_its_members(self):
+        scores = risk_scoring.score_network(self.companies, self.invoices, self.rings)
+        worst_ring = max(self.rings, key=lambda r: risk_scoring.ring_risk(r, scores)[0])
+
+        score, explanation = risk_scoring.ring_risk(worst_ring, scores)
+
+        self.assertGreater(score, 50.0)
+        self.assertTrue(explanation)
+        self.assertLessEqual(len(explanation), 4)
+
+    def test_empty_database_does_not_crash(self):
+        empty = pd.DataFrame()
+        features = risk_scoring.engineer_features(empty, empty, [])
+
+        self.assertTrue(features.empty)

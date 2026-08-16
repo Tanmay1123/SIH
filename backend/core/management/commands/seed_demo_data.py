@@ -406,8 +406,14 @@ class Command(BaseCommand):
         )
 
         self.stdout.write("Clearing existing data...")
-        # Invoices reference companies, so they go first.
+        # Reseeding invalidates every downstream fraud-engine result, because
+        # they all reference company primary keys that are about to change.
+        from fraud_engine.models import FlaggedRing, LedgerBlock, RiskScore
+
         Invoice.objects.all().delete()
+        RiskScore.objects.all().delete()
+        FlaggedRing.objects.all().delete()
+        LedgerBlock.objects.all().delete()
         Company.objects.all().delete()
 
         self.stdout.write("Inserting companies...")

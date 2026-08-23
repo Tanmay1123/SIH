@@ -187,18 +187,15 @@ Open a **second terminal**, in the same folder, and set up the database:
 
 ```bash
 docker-compose exec backend python manage.py migrate
-docker-compose exec backend python manage.py seed_demo_data
+docker-compose exec backend python manage.py createsuperuser
 ```
 
-You should see something like:
+`createsuperuser` makes your officer login — pick a username and password,
+you'll use them on the app's login page. There is no self-signup.
 
-```
-Seeded 220 companies and 3691 invoices.
-  Injected fraud rings   : 7 (sizes [3, 3, 5, 4, 4, 4, 3])
-  Injected benign loops  : 20 (genuine two-way trade, should NOT be flagged as fraud)
-```
-
-**Done.** Open http://localhost:5173
+**Done.** Open http://localhost:5173, log in, then use **Upload CSV** to load
+a dataset (companies.csv + invoices.csv — see §5.1 below for the schema and
+how to generate one) before clicking **Run detection**.
 
 | Service | URL |
 |---|---|
@@ -251,10 +248,11 @@ Then:
 
 ```bash
 python manage.py migrate
-python manage.py seed_demo_data
+python manage.py createsuperuser
 python manage.py runserver
 ```
 
+`createsuperuser` makes your officer login for the dashboard.
 Backend is now on http://localhost:8000
 
 ### Terminal 2 — frontend
@@ -273,6 +271,50 @@ Frontend is now on http://localhost:5173
 **Remember:** `USE_SQLITE` is a per-terminal environment variable. If you close
 the terminal, set it again before running any `manage.py` command, or Django
 will try to reach a PostgreSQL server that isn't there.
+
+---
+
+## 5.1. Getting a dataset in
+
+The app ships with **no data and no built-in generator** — an officer uploads
+one. Log in, click **Upload CSV** in the header, and provide two files:
+
+**`companies.csv`**
+
+| column | type | notes |
+|---|---|---|
+| `gstin` | text | unique |
+| `pan` | text | |
+| `name` | text | |
+| `director_name` | text | |
+| `registered_address` | text | |
+| `registered_date` | date | `YYYY-MM-DD` |
+| `declared_turnover` | number | |
+
+**`invoices.csv`**
+
+| column | type | notes |
+|---|---|---|
+| `seller_gstin` | text | must match a row in companies.csv |
+| `buyer_gstin` | text | must match a row in companies.csv |
+| `amount` | number | |
+| `date` | date | `YYYY-MM-DD` |
+| `goods_description` | text | |
+| `has_eway_bill` | boolean | `true`/`false`, `1`/`0`, `yes`/`no` |
+
+Uploading **replaces the entire dataset** — companies, invoices, detected
+rings, scores, and the audit ledger. Don't have a CSV pair handy? Run the
+standalone generator script (no Django dependency, only needs `Faker`) that
+was used to produce the demo dataset:
+
+```bash
+pip install Faker
+python generate_dataset.py   # writes companies.csv and invoices.csv
+```
+
+That script isn't part of this repo (it's a one-off tool, not app code) — ask
+whoever set up the project for it, or write your own generator against the
+schema above.
 
 ---
 
@@ -296,32 +338,56 @@ when the forger recomputes the edited block's own hash).
 ### Check the API is alive
 
 ```bash
-curl http://localhost:8000/api/fraud/status/
+curl http://localhost:8000/api/auth/login/ -X POST -d "username=you&password=yourpass" -H "Content-Type: application/x-www-form-urlencoded"
 ```
 
-Should report `"companies": 220` and `"invoices": 3691`.
+Should return a `token`. Every other endpoint needs it: add
+`-H "Authorization: Token <token>"` to subsequent requests, e.g.
+`curl -H "Authorization: Token <token>" http://localhost:8000/api/fraud/status/`.
 
 ### Check the dashboard
 
-Open http://localhost:5173. The header should show **220 companies**, **3691
-invoices**, **Loops found 0**, **Ledger Intact**. If it shows an error bar
-saying it can't reach the API, the backend isn't running.
+Open http://localhost:5173. You should land on a login page. Log in with the
+account you created via `createsuperuser`. The header will show **0
+companies** until you upload a dataset (§5.1) — that's expected, not an error.
+If you see an error bar saying it can't reach the API, the backend isn't
+running.
+
+**A few interface things worth knowing before your first look:**
+
+- **Light/dark toggle** — the sun/moon button at the top-left of the header.
+  Choice persists across reloads (`localStorage`). Defaults to dark.
+- **Collapsible alerts panel** — the lines icon at the top of the left panel
+  collapses it to a slim strip and back, for when the graph needs the room.
+- **Upload CSV** opens a two-file drag-and-drop modal (companies + invoices).
+  Both files are required before **Run detection** unlocks.
+- **The graph view is deliberately Obsidian-style**, not a generic force
+  layout: node labels are hidden when zoomed out and fade in as you zoom into
+  a region (so a 250-company network doesn't render as an unreadable wall of
+  overlapping text), node size scales with how many companies each one trades
+  with, and there are no arrowheads — direction is shown in the evidence
+  panel's numbered loop list instead. Selecting a ring from the alerts feed
+  forces that ring's labels visible at any zoom level. See
+  `frontend/src/components/GraphView.jsx` for the mechanics, or
+  [docs/UNDERSTAND_ME.md](docs/UNDERSTAND_ME.md) for why it's built that way.
 
 ---
 
 ## 7. How to demo it
 
-This is the walkthrough to give a judge. It takes about two minutes.
+This is the walkthrough to give a judge. It takes about two minutes. Numbers
+below are from the ~250-company / ~3,800-invoice demo dataset (§5.1); yours
+will differ if you upload a different one.
 
-1. **Open the dashboard.** Header shows ~220 companies and ~3,700 invoices
-   seeded, zero loops found so far.
+1. **Log in, then upload a dataset.** Header shows ~250 companies and ~3,800
+   invoices loaded, zero loops found so far.
 
 2. **Click "Run detection".** This rebuilds the graph, runs cycle detection,
    then scores every candidate. Takes a few seconds.
-   - **"Loops found" jumps to ~33.** That's *every* closed loop in the network
+   - **"Loops found" jumps to ~32.** That's *every* closed loop in the network
      — including genuine two-way trade, which also forms cycles.
-   - **"High risk" settles on 7.** Those are the 7 fraud rings actually
-     injected. The other ~26 loops are honest reciprocal trade the model
+   - **"High risk" settles on 11.** Those are the fraud rings actually
+     injected. The other ~21 loops are honest reciprocal trade the model
      correctly pushed to the bottom.
 
 3. **Click the top alert.** The graph dims everything except that ring and
@@ -332,8 +398,8 @@ This is the walkthrough to give a judge. It takes about two minutes.
 
 4. **Scroll to the bottom of the alerts feed.** Those loops score near zero —
    established distributors doing genuine two-way trade. **This contrast is the
-   whole point.** Cycle detection alone would have flagged all 33 equally,
-   putting 26 honest businesses under investigation.
+   whole point.** Cycle detection alone would have flagged all ~32 equally,
+   putting ~21 honest businesses under investigation.
 
 5. **Click "Confirm as fraudulent".** The evidence bundle is written to the
    audit ledger as a new block. The view switches to the ledger tab, where the
@@ -362,7 +428,7 @@ So nobody is surprised by the install size or wonders what a package is for.
 | `django-cors-headers`, `django-filter` | Cross-origin requests from the React dev server; queryset filtering |
 | `psycopg2-binary` | PostgreSQL driver |
 | `python-dotenv` | Reads `.env` |
-| `Faker`, `pandas`, `numpy` | Synthetic data generation and the feature pipeline |
+| `Faker`, `pandas`, `numpy` | Used by the offline model trainer/tests (`fraud_engine/synthetic_network.py`) and the feature pipeline; not used to seed the running app |
 | `networkx` | The graph — Tarjan's SCC and Johnson's cycle enumeration |
 | `scikit-learn`, `xgboost` | Risk model training and inference |
 | `shap` | Explainability (pulls in `numba` + `llvmlite`, which are large) |
@@ -392,8 +458,10 @@ dependencies — **budget ~2 GB total**.
 - **The trained ML model.** It's committed at
   `backend/fraud_engine/models_artifacts/risk_model.json` (small, XGBoost's
   native JSON format, not a pickle). No training step required.
-- **Any dataset.** The data is generated by `manage.py seed_demo_data`.
-- **Any API keys, accounts or credentials.** Everything runs offline and local.
+- **Any API keys.** Everything runs offline and local.
+
+You **do** need a dataset — the app doesn't generate one. Upload a CSV pair
+via the dashboard (§5.1).
 
 ---
 
@@ -410,12 +478,11 @@ sih26-fraud-detection/
 │   ├── Dockerfile
 │   ├── config/                 # Django settings, root URLs, WSGI
 │   │
-│   ├── core/                   # ── APP 1: the base data model ──
+│   ├── core/                   # ── APP 1: the base data model + auth/upload ──
 │   │   ├── models.py           #    Company (nodes) + Invoice (edges)
 │   │   ├── serializers.py
-│   │   ├── views.py
-│   │   └── management/commands/
-│   │       └── seed_demo_data.py   # the synthetic network generator
+│   │   ├── views.py             #    also: dataset upload, login/logout/whoami
+│   │   └── csv_import.py       #    parses+loads officer-uploaded CSVs
 │   │
 │   └── fraud_engine/           # ── APP 2: everything detection-related ──
 │       ├── graph_builder.py    #    DB → NetworkX DiGraph
@@ -426,6 +493,8 @@ sih26-fraud-detection/
 │       ├── views.py            #    all fraud API endpoints
 │       ├── tests.py            #    30 tests in 3 classes
 │       ├── models_artifacts/   #    the committed pretrained model
+│       ├── synthetic_network.py     # generator used ONLY by tests + training,
+│       │                            # never to seed the running app
 │       └── management/commands/
 │           └── train_risk_model.py  # optional retraining
 │
@@ -433,10 +502,14 @@ sih26-fraud-detection/
 │   ├── package.json
 │   └── src/
 │       ├── api.js              # axios instance + every API call
-│       ├── Dashboard.jsx       # three-pane layout + all state
+│       ├── App.jsx             # auth gate: shows Login or Dashboard; owns theme
+│       ├── useTheme.js         # dark/light mode hook, persisted to localStorage
+│       ├── icons.jsx           # dependency-free inline SVG icons
+│       ├── Login.jsx           # officer sign-in page
+│       ├── Dashboard.jsx       # three-pane layout + all state + CSV upload modal
 │       └── components/
-│           ├── AlertsFeed.jsx      # ranked work queue (left)
-│           ├── GraphView.jsx       # Cytoscape network (centre)
+│           ├── AlertsFeed.jsx      # ranked work queue (left), collapsible
+│           ├── GraphView.jsx       # Cytoscape network, Obsidian-style (centre)
 │           ├── CompanyDetail.jsx   # evidence panel (right)
 │           └── LedgerViewer.jsx    # audit chain
 │
@@ -451,34 +524,42 @@ detection. Each is short enough to read top to bottom.
 
 ## 10. API reference
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| GET | `/api/companies/` | Companies (paginated, `?search=`, `?page_size=`) |
-| GET | `/api/companies/{id}/` | Company + risk score + explanation + ring membership |
-| GET | `/api/invoices/` | Invoices (`?company=` / `?seller=` / `?buyer=`) |
-| POST | `/api/fraud/rebuild-graph/` | Rebuild graph, run cycle detection, store rings |
-| POST | `/api/fraud/score/` | Feature engineering + XGBoost + SHAP over current rings |
-| GET | `/api/fraud/rings/` | Flagged rings, highest risk first |
-| GET | `/api/fraud/rings/{id}/` | Ring detail: companies, invoices, score, explanation |
-| POST | `/api/fraud/rings/{id}/confirm/` | Officer confirms → appends a ledger block |
-| GET | `/api/fraud/status/` | Dashboard summary counters |
-| GET | `/api/fraud/graph/` | Whole network in one Cytoscape-shaped payload |
-| GET | `/api/ledger/blocks/` | All ledger blocks |
-| GET | `/api/ledger/verify/` | Walk the chain, report whether it's intact |
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| POST | `/api/auth/login/` | — | `{username, password}` → `{token, username}` |
+| POST | `/api/auth/logout/` | ✓ | Invalidate the caller's token |
+| GET | `/api/auth/whoami/` | ✓ | Validate a stored token |
+| POST | `/api/data/upload/` | ✓ | `companies` + `invoices` CSV files → replaces the dataset |
+| GET | `/api/companies/` | ✓ | Companies (paginated, `?search=`, `?page_size=`) |
+| GET | `/api/companies/{id}/` | ✓ | Company + risk score + explanation + ring membership |
+| GET | `/api/invoices/` | ✓ | Invoices (`?company=` / `?seller=` / `?buyer=`) |
+| POST | `/api/fraud/rebuild-graph/` | ✓ | Rebuild graph, run cycle detection, store rings |
+| POST | `/api/fraud/score/` | ✓ | Feature engineering + XGBoost + SHAP over current rings |
+| GET | `/api/fraud/rings/` | ✓ | Flagged rings, highest risk first |
+| GET | `/api/fraud/rings/{id}/` | ✓ | Ring detail: companies, invoices, score, explanation |
+| POST | `/api/fraud/rings/{id}/confirm/` | ✓ | Confirms as the *authenticated* officer → appends a ledger block |
+| GET | `/api/fraud/status/` | ✓ | Dashboard summary counters |
+| GET | `/api/fraud/graph/` | ✓ | Whole network in one Cytoscape-shaped payload |
+| GET | `/api/ledger/blocks/` | ✓ | All ledger blocks |
+| GET | `/api/ledger/verify/` | ✓ | Walk the chain, report whether it's intact |
 
-Driving the pipeline without the UI:
+Everything except login requires `Authorization: Token <token>`. Driving the
+pipeline without the UI:
 
 ```bash
-curl -X POST http://localhost:8000/api/fraud/rebuild-graph/
-curl -X POST http://localhost:8000/api/fraud/score/
-curl http://localhost:8000/api/fraud/rings/
-curl -X POST http://localhost:8000/api/fraud/rings/1/confirm/
-curl http://localhost:8000/api/ledger/verify/
+TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/login/ \
+  -d "username=you&password=yourpass" | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
+
+curl -H "Authorization: Token $TOKEN" -X POST http://localhost:8000/api/fraud/rebuild-graph/
+curl -H "Authorization: Token $TOKEN" -X POST http://localhost:8000/api/fraud/score/
+curl -H "Authorization: Token $TOKEN" http://localhost:8000/api/fraud/rings/
+curl -H "Authorization: Token $TOKEN" -X POST http://localhost:8000/api/fraud/rings/1/confirm/
+curl -H "Authorization: Token $TOKEN" http://localhost:8000/api/ledger/verify/
 ```
 
-There is **no authentication** — every endpoint is open. That is fine for a
-prototype and unacceptable for production; see the limitations section of
-`docs/UNDERSTAND_ME.md`.
+Every endpoint requires an authenticated officer account (Django's built-in
+auth, token-based). There is no self-signup — accounts are created with
+`createsuperuser` or via `/admin/`.
 
 ---
 
@@ -489,15 +570,13 @@ your venv active on Path B.
 
 | Task | Command |
 |---|---|
-| Reset and regenerate all demo data | `python manage.py seed_demo_data` |
-| Generate a *different* network | `python manage.py seed_demo_data --seed 7` |
-| Bigger network | `python manage.py seed_demo_data --companies 400 --rings 12` |
+| Load or replace the dataset | Upload CSV button in the dashboard (§5.1) |
+| Create an officer login | `python manage.py createsuperuser` |
 | Run the tests | `python manage.py test` |
 | Run one test class | `python manage.py test fraud_engine.tests.LedgerTests` |
 | Retrain the model (optional) | `python manage.py train_risk_model` |
 | Apply new migrations | `python manage.py migrate` |
 | After changing a model | `python manage.py makemigrations` |
-| Create an admin login | `python manage.py createsuperuser` |
 
 Docker-specific:
 
@@ -585,8 +664,9 @@ shout and we'll fix it in a commit.
 - Changed `requirements.txt` or `package.json`? Tell the team, and rebuild with
   `docker-compose up --build`.
 - Run `python manage.py test` before pushing. All 30 should pass.
-- The generator is seeded, so `seed_demo_data` is reproducible: same seed, same
-  network. Use `--seed N` if you want to test against a different one.
+- `fraud_engine/synthetic_network.py` (used by tests and `train_risk_model`,
+  never by the running app) is seeded, so it's reproducible: same seed, same
+  network.
 - Retraining is deterministic too — `train_risk_model` regenerates a
   byte-identical artifact, so it won't show up as a spurious diff. If it *does*
   produce a diff, something upstream genuinely changed (a feature, the
@@ -597,13 +677,16 @@ shout and we'll fix it in a commit.
 
 | You want to change... | Go to |
 |---|---|
-| What the synthetic data looks like | `backend/core/management/commands/seed_demo_data.py` |
+| The test/training data generator | `backend/fraud_engine/synthetic_network.py` |
+| The CSV upload format or validation | `backend/core/csv_import.py` |
 | How cycles are found | `backend/fraud_engine/cycle_detection.py` |
 | Risk features or the model | `backend/fraud_engine/risk_scoring.py` |
 | The plain-English explanation wording | `_describe()` in `risk_scoring.py` |
 | API endpoints | `backend/fraud_engine/views.py` + `urls.py` |
 | The dashboard layout | `frontend/src/Dashboard.jsx` |
-| The graph's look | `frontend/src/components/GraphView.jsx` |
+| The graph's look and behaviour | `frontend/src/components/GraphView.jsx` |
+| The login page | `frontend/src/Login.jsx` |
+| Light/dark theme | `frontend/src/useTheme.js` |
 
 **One thing worth understanding before you touch the ML.** The risk model scores
 *only* companies that cycle detection already surfaced. That boundary is
@@ -627,5 +710,5 @@ demonstrates is that the pipeline is wired correctly. Section 11 of
 walkthrough: how Tarjan and Johnson work in words, what each of the 17 risk
 features means and why it signals fraud, how the hash chain works and what it
 does *not* protect against, a two-minute judge pitch with answers to likely
-pushback, and an honest limitations section covering what production would
-require.
+pushback, an honest limitations section covering what production would
+require, and a full tech stack breakdown at the end.

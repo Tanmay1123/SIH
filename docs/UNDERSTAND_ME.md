@@ -46,9 +46,15 @@ advantage rather than a compromise:
   loops specifically designed to fool a naive detector (see §5).
 - **It is reproducible.** Same seed, same network — so a result can be checked.
 
-The generator is `backend/core/management/commands/seed_demo_data.py`. Nothing
-in the system is hardcoded to the synthetic data: swap in real companies and
-invoices and the entire pipeline downstream works unchanged.
+The generator lives at `backend/fraud_engine/synthetic_network.py`. It is
+internal tooling only: it feeds the test suite and the offline model trainer
+(`train_risk_model`), and is never used to populate the running application.
+The app itself starts empty and only ever holds a dataset an officer uploaded
+as a CSV pair — nothing in the pipeline is hardcoded to synthetic data, so a
+real (companies, invoices) dataset runs through exactly the same code
+unchanged. A standalone, Django-free copy of the generator script is what
+produces a CSV pair to upload for a demo; see the project README for how to
+get one.
 
 ---
 
@@ -56,9 +62,8 @@ invoices and the entire pipeline downstream works unchanged.
 
 ```
    ┌──────────────────────────────────────────────────────────────┐
-   │  seed_demo_data.py        (synthetic generator)              │
-   │  ~220 companies, ~3,700 invoices                             │
-   │  7 fraud rings + 20 benign loops injected on purpose         │
+   │  Officer logs in, uploads companies.csv + invoices.csv       │
+   │  (core/csv_import.py validates and loads it)                 │
    └──────────────────────────┬───────────────────────────────────┘
                               │ writes
                               ▼
@@ -85,7 +90,7 @@ invoices and the entire pipeline downstream works unchanged.
    │  risk_scoring.py                                             │
    │  17 features -> XGBoost -> probability -> 0-100 score        │
    │  SHAP -> plain-English reasons                               │
-   │  7 rings score 88-99, the other ~26 score under 13           │
+   │  fraud rings score high, benign loops score low              │
    └──────────────────────────┬───────────────────────────────────┘
                               ▼
                     ┌───────────────────┐
@@ -126,9 +131,12 @@ Two tables, because the whole problem only needs two.
   invoice is a directed edge. `director_name` and `registered_address` are
   indexed because the feature pipeline groups on them to find shell factories.
 - **`serializers.py` / `views.py` / `urls.py`** — read-only REST endpoints for
-  companies and invoices. Company detail also carries the latest risk score,
-  its explanation, and which rings it belongs to.
-- **`management/commands/seed_demo_data.py`** — the generator. Explained in §5.
+  companies and invoices, plus dataset upload and auth (login/logout/whoami).
+  Company detail also carries the latest risk score, its explanation, and
+  which rings it belongs to.
+- **`csv_import.py`** — parses and validates an officer-uploaded CSV pair and
+  loads it, replacing the entire dataset in one transaction. The only path by
+  which data enters the application.
 
 ### `backend/fraud_engine/` — everything detection-related
 
@@ -149,14 +157,67 @@ Two tables, because the whole problem only needs two.
   plus `feature_meta.json`). Committed on purpose so a fresh clone can score
   immediately. Stored as XGBoost's native JSON rather than a pickle, which
   keeps it small, inspectable and portable across library versions.
+- **`synthetic_network.py`** — the synthetic trade-network generator described
+  in §2. Used only by `tests.py` and `train_risk_model.py`; never touches the
+  running application's database.
 - **`management/commands/train_risk_model.py`** — optional retraining.
 
 ### `frontend/src/`
 
-- **`api.js`** — one Axios instance and every API call the app makes.
-- **`Dashboard.jsx`** — the three-pane layout and all state.
-- **`components/AlertsFeed.jsx`** — the ranked work queue.
-- **`components/GraphView.jsx`** — Cytoscape network, nodes coloured by risk.
+- **`api.js`** — one Axios instance, an auth-token request interceptor, and
+  every API call the app makes.
+- **`App.jsx`** — checks for a stored token on load and shows `Login` or
+  `Dashboard` accordingly; also catches 401s from any API call and drops back
+  to the login screen. Owns the `useTheme` hook at the top of the tree (not
+  inside `Dashboard`) so the chosen theme is already applied on the login
+  screen, before there is a dashboard to render at all.
+- **`useTheme.js`** — dark/light mode as a small hook: reads/writes a
+  `localStorage` key, toggles the `dark` class on `<html>`, and defaults to
+  dark. Tailwind is configured with `@custom-variant dark
+  (&:where(.dark, .dark *))` in `index.css` so `dark:` utilities key off that
+  class instead of the OS-level `prefers-color-scheme` media query — the
+  in-app toggle overrides the OS setting rather than fighting it.
+- **`icons.jsx`** — small dependency-free inline SVG icons (sun, moon, menu,
+  upload, trash, close, file), used instead of pulling in an icon package.
+- **`Login.jsx`** — the officer sign-in page.
+- **`Dashboard.jsx`** — the three-pane layout and all page-level state: it
+  polls status/rings/graph together, drives "Run detection", and hosts the
+  **Upload CSV** modal (`UploadDataset`), a two-file drag-and-drop flow — one
+  drop zone each for `companies.csv` and `invoices.csv` — that gates **Run
+  detection** until both files are present. It also owns whether the alerts
+  panel is collapsed, passed down to `AlertsFeed`.
+- **`components/AlertsFeed.jsx`** — the ranked work queue on the left.
+  Collapsible: a lines icon at its top toggles it down to a slim strip and
+  back, for when the graph needs the screen space.
+- **`components/GraphView.jsx`** — the Cytoscape network view, deliberately
+  built to match how Obsidian's graph view actually *works*, not just how it
+  looks (researched from Obsidian's own graph-view documentation rather than
+  guessed at). The mechanics, in order of how much they matter:
+  - **Zoom-relative label fade.** Node labels start at `text-opacity: 0` and
+    fade in only as you zoom past a threshold computed relative to the
+    zoom-to-fit level, driven by a `zoom` event handler (`updateLabelFade()`).
+    This is the part that actually solves the readability problem: with ~250
+    companies on screen, showing every label simultaneously is unreadable no
+    matter how small the dots are made. Zoomed out you see shape only; zoom
+    into a cluster and its names become legible.
+  - **Degree-based node size.** A node's size is driven by
+    `node.degree(false)` — how many distinct companies it has traded with —
+    the same "more links, bigger node" rule Obsidian applies to notes, with a
+    modest extra multiplier for a confirmed high risk score.
+  - **No arrowheads.** Plain thin straight edges only; direction is shown in
+    the evidence panel's numbered loop list instead, where it is actually
+    legible, rather than as tiny arrows lost in a dense graph.
+  - **A calm staggered reveal**, not a visible physics simulation: the cose
+    layout runs once, instantly (`animate: false`) with every element hidden,
+    then nodes fade in in small batches ordered by a BFS traversal (so a
+    cluster of trading partners ripples in together), with edges fading in
+    once both endpoints are visible.
+  - **A selected ring's labels are forced visible at any zoom level** —
+    including fully zoomed out — via an inline `text-opacity` override, with
+    a resync back to the zoom-driven value on deselection.
+  - Spacing (`nodeRepulsion`, `idealEdgeLength`) scales with node count, so a
+    20-node ring-only view and the full ~250-node network each get
+    proportionate room to spread out.
 - **`components/CompanyDetail.jsx`** — the evidence panel and confirm action.
 - **`components/LedgerViewer.jsx`** — blocks and chain verification status.
 
@@ -406,10 +467,12 @@ Wait for all three containers to report ready. In a second terminal:
 
 ```bash
 docker-compose exec backend python manage.py migrate
-docker-compose exec backend python manage.py seed_demo_data
+docker-compose exec backend python manage.py createsuperuser
 ```
 
-Open http://localhost:5173 and click **Run detection**.
+Open http://localhost:5173, log in, upload a companies/invoices CSV pair via
+**Upload CSV**, then click **Run detection**. See the project README for the
+CSV schema and where to get a demo dataset.
 
 Run the tests:
 
@@ -430,7 +493,7 @@ python -m venv .venv
 
 export USE_SQLITE=True          # Windows PowerShell: $env:USE_SQLITE="True"
 python manage.py migrate
-python manage.py seed_demo_data
+python manage.py createsuperuser
 python manage.py runserver
 ```
 
@@ -447,12 +510,17 @@ The frontend defaults to `http://localhost:8000/api`; override with
 
 ### Driving it from the API instead of the UI
 
+Every endpoint but login needs `Authorization: Token <token>`:
+
 ```bash
-curl -X POST http://localhost:8000/api/fraud/rebuild-graph/
-curl -X POST http://localhost:8000/api/fraud/score/
-curl http://localhost:8000/api/fraud/rings/
-curl -X POST http://localhost:8000/api/fraud/rings/1/confirm/
-curl http://localhost:8000/api/ledger/verify/
+TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/login/ \
+  -d "username=you&password=yourpass" | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
+
+curl -H "Authorization: Token $TOKEN" -X POST http://localhost:8000/api/fraud/rebuild-graph/
+curl -H "Authorization: Token $TOKEN" -X POST http://localhost:8000/api/fraud/score/
+curl -H "Authorization: Token $TOKEN" http://localhost:8000/api/fraud/rings/
+curl -H "Authorization: Token $TOKEN" -X POST http://localhost:8000/api/fraud/rings/1/confirm/
+curl -H "Authorization: Token $TOKEN" http://localhost:8000/api/ledger/verify/
 ```
 
 ---
@@ -566,10 +634,64 @@ curl http://localhost:8000/api/ledger/verify/
   who *viewed* what, and any subsequent case outcome.
 
 **Security and operations**
-- There is no authentication. Every endpoint is open, and "officer" is a string
-  the client sends. Real deployment needs authenticated accounts, role-based
-  access, and confirmations signed by an identified officer — the ledger's value
-  depends on knowing who confirmed what.
+- Every endpoint requires an authenticated officer account (Django's built-in
+  auth, DRF token authentication) and confirmations are stamped with the
+  authenticated user, not a client-supplied string. What's still missing for
+  a real deployment: role-based permissions (today any authenticated account
+  can do everything - upload, run detection, confirm rings), account
+  lockout/rate-limiting on login, and token expiry/rotation (DRF's tokens
+  don't expire on their own).
 - `DEBUG=True` and a placeholder secret key ship in `.env.example` for demo
   convenience. Both must change before any real deployment.
 - CORS is fully open for local development.
+
+---
+
+## 13. Tech stack
+
+**Backend**
+
+| Piece | What it's for |
+|---|---|
+| [Django](https://www.djangoproject.com/) 5 | Web framework, ORM, migrations, `django.contrib.auth` |
+| [Django REST Framework](https://www.django-rest-framework.org/) | The API layer: serializers, generic views, pagination |
+| DRF `TokenAuthentication` | Officer auth — a bearer token, no session/CSRF dance for the SPA |
+| `django-filter` | Queryset filtering on list endpoints |
+| `django-cors-headers` | Lets the Vite dev server talk to Django cross-origin |
+| [PostgreSQL](https://www.postgresql.org/) 14+ (via `psycopg2-binary`) | The real datastore |
+| SQLite | Drop-in swap for Postgres in dev/test via `USE_SQLITE=True` — no server needed |
+| `python-dotenv` | Loads `.env` into the process |
+
+**Data / ML**
+
+| Piece | What it's for |
+|---|---|
+| [NetworkX](https://networkx.org/) | The graph itself — Tarjan's SCC pre-filter + Johnson's cycle enumeration |
+| [pandas](https://pandas.pydata.org/) / [NumPy](https://numpy.org/) | Feature engineering, the graph-builder's DataFrames |
+| [XGBoost](https://xgboost.ai/) | Gradient-boosted trees scoring each candidate ring 0–100 |
+| [scikit-learn](https://scikit-learn.org/) | Train/test splitting, metrics (ROC AUC) |
+| [SHAP](https://shap.readthedocs.io/) | Per-prediction feature attribution, turned into plain-English reasons |
+| [Faker](https://faker.readthedocs.io/) | Realistic-looking synthetic company/director/address data for the generator |
+
+**Frontend**
+
+| Piece | What it's for |
+|---|---|
+| [React](https://react.dev/) 18 | UI — function components + hooks throughout |
+| [Vite](https://vite.dev/) | Dev server and production build |
+| [Tailwind CSS](https://tailwindcss.com/) v4 | Styling, class-based dark mode via `@custom-variant dark` |
+| [Cytoscape.js](https://js.cytoscape.org/) | The interactive network graph (see §4's `GraphView.jsx` entry) |
+| [Axios](https://axios-http.com/) | API calls, with a token-injecting request interceptor |
+
+**Infra / tooling**
+
+| Piece | What it's for |
+|---|---|
+| Docker + Docker Compose | Optional one-command local stack: postgres + backend + frontend containers |
+| Git | Version control |
+
+**What's deliberately absent.** No task queue (Celery/Redis) — the whole
+detection pipeline runs synchronously inside one HTTP request because it's
+fast enough (§3). No state-management library on the frontend — `useState` at
+the top of `Dashboard.jsx` is enough for one page. No icon package — `icons.jsx`
+is a handful of inline SVGs. No CSS-in-JS — Tailwind utility classes only.

@@ -3,6 +3,12 @@ import axios from 'axios'
 // Falls back to localhost so `npm run dev` works without any env setup.
 const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
 
+const TOKEN_KEY = 'codenova_auth_token'
+
+export const getToken = () => localStorage.getItem(TOKEN_KEY)
+export const setToken = (token) => localStorage.setItem(TOKEN_KEY, token)
+export const clearToken = () => localStorage.removeItem(TOKEN_KEY)
+
 const client = axios.create({
   baseURL,
   headers: { 'Content-Type': 'application/json' },
@@ -10,6 +16,50 @@ const client = axios.create({
   // few seconds. The default 0 (no timeout) is fine, but be explicit.
   timeout: 120000,
 })
+
+// Every request carries the officer's bearer token, if we have one.
+client.interceptors.request.use((config) => {
+  const token = getToken()
+  if (token) config.headers.Authorization = `Token ${token}`
+  return config
+})
+
+// A 401 means the token is missing, wrong, or was invalidated server-side
+// (logout, or the account was removed) - drop it and force a fresh login.
+client.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      clearToken()
+      window.dispatchEvent(new Event('codenova:unauthorized'))
+    }
+    return Promise.reject(error)
+  },
+)
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+export const login = (username, password) =>
+  client.post('/auth/login/', { username, password }).then((r) => r.data)
+
+export const logout = () => client.post('/auth/logout/').then((r) => r.data)
+
+export const whoami = () => client.get('/auth/whoami/').then((r) => r.data)
+
+// ---------------------------------------------------------------------------
+// Dataset upload
+// ---------------------------------------------------------------------------
+
+export const uploadDataset = (companiesFile, invoicesFile) => {
+  const form = new FormData()
+  form.append('companies', companiesFile)
+  form.append('invoices', invoicesFile)
+  return client
+    .post('/data/upload/', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+    .then((r) => r.data)
+}
 
 // ---------------------------------------------------------------------------
 // Pipeline
@@ -41,8 +91,9 @@ export const getRings = () =>
 
 export const getRing = (id) => client.get(`/fraud/rings/${id}/`).then((r) => r.data)
 
-export const confirmRing = (id, officer = 'demo-officer') =>
-  client.post(`/fraud/rings/${id}/confirm/`, { officer }).then((r) => r.data)
+// The confirming officer is derived server-side from the auth token, not sent
+// by the client - see fraud_engine/views.py:confirm_ring.
+export const confirmRing = (id) => client.post(`/fraud/rings/${id}/confirm/`).then((r) => r.data)
 
 // ---------------------------------------------------------------------------
 // Graph + companies

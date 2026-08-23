@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from django.test import TestCase
 
-from core.management.commands.seed_demo_data import build_synthetic_network
+from fraud_engine.synthetic_network import build_synthetic_network
 from core.models import Company, Invoice
 from fraud_engine import cycle_detection, ledger, risk_scoring
 from fraud_engine.graph_builder import build_graph, build_graph_from_dataframes

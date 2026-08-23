@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Manual light/dark toggle rather than following the OS setting: dark:
+   classes apply when an ancestor carries .dark (set on <html> by useTheme). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 html,
 body,
 #root {
@@ -8,7 +12,12 @@ body,
 
 body {
   margin: 0;
-  background-color: #0f172a;
-  color: #e2e8f0;
+  background-color: #fafafa;
+  color: #18181b;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+html.dark body {
+  background-color: #0a0a0a;
+  color: #e4e4e7;
 }

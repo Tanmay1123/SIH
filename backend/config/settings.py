@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # third party
     "rest_framework",
+    "rest_framework.authtoken",
     "django_filters",
     "corsheaders",
     # local
@@ -128,10 +129,19 @@ REST_FRAMEWORK = {
     # pointing this at a class in an app module that imports generics is a
     # circular import.
     "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
-    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
+    # Only authenticated officers can use the API. Token auth (not session/CSRF)
+    # because the client is a React SPA talking cross-origin, not a browser
+    # form: a bearer token in the Authorization header needs no CSRF dance.
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
 }
 
-# Demo prototype: the React dev server talks to Django cross-origin.
+# The React dev server talks to Django cross-origin. Credentials are carried in
+# an Authorization header (token auth), not cookies, so this stays safe even
+# fully open for local development.
 CORS_ALLOW_ALL_ORIGINS = True
 
 # ---------------------------------------------------------------------------

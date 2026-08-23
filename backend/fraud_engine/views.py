@@ -56,7 +56,7 @@ def rebuild_graph(request):
     graph = build_graph()
     if graph.number_of_nodes() == 0:
         return Response(
-            {"detail": "No companies in the database. Run seed_demo_data first."},
+            {"detail": "No companies in the database. Upload a dataset first."},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -182,7 +182,10 @@ def confirm_ring(request, pk):
             status=status.HTTP_409_CONFLICT,
         )
 
-    officer = (request.data or {}).get("officer") or "demo-officer"
+    # The confirming officer is whoever is authenticated, not a client-supplied
+    # string - the ledger's evidentiary value depends on knowing who actually
+    # confirmed a ring, and a bearer token already proves that.
+    officer = request.user.username
 
     companies = list(Company.objects.filter(id__in=ring.company_ids or []))
     by_id = {c.id: c for c in companies}

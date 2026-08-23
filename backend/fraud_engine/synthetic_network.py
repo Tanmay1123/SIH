@@ -1,14 +1,15 @@
 """
-Synthetic GST trade-network generator + database seeder.
+Synthetic GST trade-network generator.
 
 WHY SYNTHETIC DATA
 ------------------
 Real GSTN invoice data is not publicly accessible; it is confidential taxpayer
-information behind government data-sharing agreements. So this project ships a
-generator that builds a realistic company/invoice network *with known ground
-truth* about which companies are fraudulent. That is not a compromise, it is a
-feature: because we know the answer, we can measure whether the detector
-actually finds the rings it is supposed to find.
+information behind government data-sharing agreements. This generator builds a
+realistic company/invoice network *with known ground truth* about which
+companies are fraudulent, purely as internal tooling: training the risk model
+(`train_risk_model`) and exercising the detection pipeline in tests
+(`fraud_engine/tests.py`). It is not used to seed the running application -
+the app only ever holds data an officer uploaded.
 
 HOW THE NETWORK IS SHAPED
 -------------------------
@@ -28,9 +29,6 @@ HOW THE NETWORK IS SHAPED
    shared registered addresses and directors, invoice value far exceeding
    declared turnover, missing e-way bills, near-identical amounts circling the
    loop, and very recent registration.
-
-So cycle detection narrows ~220 companies down to ~25 candidate rings, and the
-ML model's real job is separating the fraudulent loops from the benign ones.
 """
 from __future__ import annotations
 
@@ -38,11 +36,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from django.core.management.base import BaseCommand
-from django.db import transaction
 from faker import Faker
-
-from core.models import Company, Invoice
 
 # --------------------------------------------------------------------------
 # Generator constants
@@ -216,7 +210,8 @@ def build_synthetic_network(
     Build a trade network whose only cycles are the ones we deliberately create.
 
     Returns plain dicts (not Django models) so the exact same code path can feed
-    both the database seeder and the offline model trainer.
+    both the offline model trainer and the test suite, without touching a
+    database.
     """
     rng = random.Random(seed)
     fake = Faker("en_IN")
@@ -530,98 +525,3 @@ def build_synthetic_network(
         company["declared_turnover"] = round(traded * rng.uniform(0.85, 1.2), 2)
 
     return net
-
-
-# --------------------------------------------------------------------------
-# Django management command
-# --------------------------------------------------------------------------
-
-
-class Command(BaseCommand):
-    help = (
-        "Wipe and reseed the database with a synthetic GST trade network "
-        "containing deliberately injected circular-trade fraud rings."
-    )
-
-    def add_arguments(self, parser):
-        parser.add_argument("--seed", type=int, default=42,
-                            help="RNG seed (same seed = same network).")
-        parser.add_argument("--companies", type=int, default=220,
-                            help="Approximate number of companies to generate.")
-        parser.add_argument("--rings", type=int, default=7,
-                            help="Number of fraud rings to inject (3-6 companies each).")
-
-    @transaction.atomic
-    def handle(self, *args, **options):
-        self.stdout.write("Generating synthetic trade network...")
-        net = build_synthetic_network(
-            seed=options["seed"],
-            n_companies=options["companies"],
-            n_fraud_rings=options["rings"],
-        )
-
-        self.stdout.write("Clearing existing data...")
-        # Reseeding invalidates every downstream fraud-engine result, because
-        # they all reference company primary keys that are about to change.
-        from fraud_engine.models import FlaggedRing, LedgerBlock, RiskScore
-
-        Invoice.objects.all().delete()
-        RiskScore.objects.all().delete()
-        FlaggedRing.objects.all().delete()
-        LedgerBlock.objects.all().delete()
-        Company.objects.all().delete()
-
-        self.stdout.write("Inserting companies...")
-        companies = Company.objects.bulk_create(
-            [
-                Company(
-                    gstin=c["gstin"],
-                    pan=c["pan"],
-                    name=c["name"],
-                    director_name=c["director_name"],
-                    registered_address=c["registered_address"],
-                    registered_date=c["registered_date"],
-                    declared_turnover=c["declared_turnover"],
-                )
-                for c in net.companies
-            ],
-            batch_size=500,
-        )
-        # bulk_create returns objects in input order, so index -> pk maps cleanly.
-        pk_by_index = {i: obj.pk for i, obj in enumerate(companies)}
-
-        self.stdout.write("Inserting invoices...")
-        Invoice.objects.bulk_create(
-            [
-                Invoice(
-                    seller_id=pk_by_index[inv["seller_idx"]],
-                    buyer_id=pk_by_index[inv["buyer_idx"]],
-                    amount=inv["amount"],
-                    date=inv["date"],
-                    goods_description=inv["goods_description"],
-                    has_eway_bill=inv["has_eway_bill"],
-                )
-                for inv in net.invoices
-            ],
-            batch_size=1000,
-        )
-
-        fraud_gstins = [
-            net.companies[i]["gstin"] for ring in net.fraud_rings for i in ring
-        ]
-
-        self.stdout.write(self.style.SUCCESS(
-            f"Seeded {len(net.companies)} companies and {len(net.invoices)} invoices."
-        ))
-        self.stdout.write(
-            f"  Injected fraud rings   : {len(net.fraud_rings)} "
-            f"(sizes {[len(r) for r in net.fraud_rings]})"
-        )
-        self.stdout.write(
-            f"  Injected benign loops  : {len(net.benign_loops)} "
-            "(genuine two-way trade, should NOT be flagged as fraud)"
-        )
-        self.stdout.write(f"  Shell companies        : {len(fraud_gstins)}")
-        self.stdout.write(
-            "\nNext: POST /api/fraud/rebuild-graph/ then POST /api/fraud/score/"
-        )

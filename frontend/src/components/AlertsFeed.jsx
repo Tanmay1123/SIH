@@ -1,8 +1,13 @@
+import { MenuIcon } from '../icons.jsx'
+
 /**
  * The investigator's work queue: every detected loop, highest risk first.
  *
  * The ordering is the product. Cycle detection alone hands over ~30 candidate
  * loops with no priority; this list is what turns that into "start here".
+ *
+ * Collapsible via the hamburger button in its own header, so it can be
+ * folded away for more graph space and reopened from the same slim strip.
  */
 
 const formatInr = (value) => {
@@ -14,10 +19,10 @@ const formatInr = (value) => {
 }
 
 const riskBadge = (score) => {
-  if (score >= 70) return 'bg-red-950 text-red-300 border-red-800'
-  if (score >= 40) return 'bg-orange-950 text-orange-300 border-orange-800'
-  if (score > 0) return 'bg-cyan-950 text-cyan-300 border-cyan-800'
-  return 'bg-slate-800 text-slate-400 border-slate-700'
+  if (score >= 70) return 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800'
+  if (score >= 40) return 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800'
+  if (score > 0) return 'bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800'
+  return 'bg-zinc-100 text-zinc-500 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700'
 }
 
 const riskLabel = (score) => {
@@ -27,30 +32,54 @@ const riskLabel = (score) => {
   return 'UNSCORED'
 }
 
-export default function AlertsFeed({ rings, selectedRingId, onSelect, loading }) {
+function CollapseToggle({ onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Toggle alerts panel"
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+    >
+      <MenuIcon className="h-4 w-4" />
+    </button>
+  )
+}
+
+export default function AlertsFeed({ rings, selectedRingId, onSelect, loading, collapsed, onToggleCollapsed }) {
+  if (collapsed) {
+    return (
+      <aside className="flex w-10 shrink-0 flex-col items-center border-r border-zinc-200 py-3 dark:border-zinc-800">
+        <CollapseToggle onClick={onToggleCollapsed} />
+      </aside>
+    )
+  }
+
   const scored = rings.filter((r) => r.risk_score > 0)
   const highRisk = rings.filter((r) => r.risk_score >= 70)
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="border-b border-slate-800 px-4 py-3">
-        <h2 className="text-sm font-semibold tracking-wide text-slate-200">
-          ALERTS
-        </h2>
-        <p className="mt-0.5 text-xs text-slate-500">
-          {rings.length} circular-trade loop{rings.length === 1 ? '' : 's'} detected
-          {scored.length > 0 && ` · ${highRisk.length} high risk`}
-        </p>
+    <aside className="flex w-80 shrink-0 flex-col border-r border-zinc-200 dark:border-zinc-800">
+      <div className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+        <CollapseToggle onClick={onToggleCollapsed} />
+        <div>
+          <h2 className="text-sm font-semibold tracking-wide text-zinc-900 dark:text-zinc-200">
+            ALERTS
+          </h2>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            {rings.length} circular-trade loop{rings.length === 1 ? '' : 's'} detected
+            {scored.length > 0 && ` · ${highRisk.length} high risk`}
+          </p>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {loading && (
-          <p className="px-4 py-6 text-sm text-slate-500">Loading alerts…</p>
+          <p className="px-4 py-6 text-sm text-zinc-500">Loading alerts…</p>
         )}
 
         {!loading && rings.length === 0 && (
-          <p className="px-4 py-6 text-sm text-slate-500">
-            No rings yet. Click <span className="text-slate-300">Run detection</span> to
+          <p className="px-4 py-6 text-sm text-zinc-500">
+            No rings yet. Click{' '}
+            <span className="text-zinc-800 dark:text-zinc-300">Run detection</span> to
             rebuild the graph and score it.
           </p>
         )}
@@ -62,18 +91,20 @@ export default function AlertsFeed({ rings, selectedRingId, onSelect, loading })
               <button
                 key={ring.id}
                 onClick={() => onSelect(ring)}
-                className={`w-full border-b border-slate-800/70 px-4 py-3 text-left transition-colors ${
-                  selected ? 'bg-slate-800' : 'hover:bg-slate-800/50'
+                className={`w-full border-b border-zinc-200/70 px-4 py-3 text-left transition-colors dark:border-zinc-800/70 ${
+                  selected
+                    ? 'bg-zinc-100 dark:bg-zinc-800'
+                    : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-600">#{index + 1}</span>
-                    <span className="text-sm font-medium text-slate-200">
+                    <span className="text-xs text-zinc-400 dark:text-zinc-600">#{index + 1}</span>
+                    <span className="text-sm font-medium text-zinc-900 dark:text-zinc-200">
                       Ring {ring.id}
                     </span>
                     {ring.officer_confirmed && (
-                      <span className="rounded border border-emerald-800 bg-emerald-950 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
+                      <span className="rounded border border-green-200 bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
                         CONFIRMED
                       </span>
                     )}
@@ -87,18 +118,18 @@ export default function AlertsFeed({ rings, selectedRingId, onSelect, loading })
                   </span>
                 </div>
 
-                <div className="mt-1 flex gap-3 text-xs text-slate-500">
+                <div className="mt-1 flex gap-3 text-xs text-zinc-500">
                   <span>{ring.ring_size} companies</span>
                   <span>{formatInr(ring.total_cycle_value)} circulating</span>
                 </div>
 
-                <p className="mt-1 truncate text-xs text-slate-600">
+                <p className="mt-1 truncate text-xs text-zinc-400 dark:text-zinc-600">
                   {(ring.company_names || []).join(' → ')}
                 </p>
               </button>
             )
           })}
       </div>
-    </div>
+    </aside>
   )
 }

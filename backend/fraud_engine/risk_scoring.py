@@ -434,7 +434,7 @@ def build_explanation(
 
 def _network_training_frame(seed: int) -> tuple[pd.DataFrame, np.ndarray]:
     """Generate one synthetic network and turn it into (features, labels)."""
-    from core.management.commands.seed_demo_data import build_synthetic_network
+    from fraud_engine.synthetic_network import build_synthetic_network
 
     net = build_synthetic_network(seed=seed, n_fraud_rings=8)
 
@@ -721,7 +721,7 @@ def run_scoring() -> dict:
     companies, invoices = load_dataframes()
     if companies.empty:
         return {"companies_scored": 0, "rings_scored": 0,
-                "message": "No companies in the database. Run seed_demo_data first."}
+                "message": "No companies in the database. Upload a dataset first."}
 
     stored_rings = list(FlaggedRing.objects.all())
 

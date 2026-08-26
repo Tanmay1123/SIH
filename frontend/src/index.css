@@ -4,6 +4,59 @@
    classes apply when an ancestor carries .dark (set on <html> by useTheme). */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ---------------------------------------------------------------------------
+   Design tokens
+
+   Two deliberate choices carry most of the look:
+
+   1. IBM Plex Sans / Plex Mono. Plex was drawn for technical and institutional
+      systems - dense tables, code, identifiers - which is exactly what this
+      console is. Plex Mono handles the things that must be read character by
+      character: GSTINs, SHA-256 hashes, model versions.
+
+   2. The neutral ramp is shifted slightly towards blue rather than being a
+      pure grey. It is a small move and it is the difference between a surface
+      that looks chosen and one that looks left at its default. Tailwind's
+      `zinc` scale is overridden in place, so every existing zinc-* utility
+      picks the new tone up without touching a single class name.
+--------------------------------------------------------------------------- */
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --color-zinc-50: #f6f8fa;
+  --color-zinc-100: #eceff4;
+  --color-zinc-200: #dde2ea;
+  --color-zinc-300: #c3cbd7;
+  --color-zinc-400: #8d97a6;
+  --color-zinc-500: #6b7585;
+  --color-zinc-600: #505a69;
+  --color-zinc-700: #3a434f;
+  --color-zinc-800: #262d38;
+  --color-zinc-900: #171d26;
+  --color-zinc-950: #0c1017;
+
+  /* The action colour. Deeper and less saturated than Tailwind's green so it
+     reads as institutional rather than as a notification. */
+  --color-brand-50: #edf7f0;
+  --color-brand-100: #d3ebda;
+  --color-brand-200: #a8d7b7;
+  --color-brand-300: #74bd8e;
+  --color-brand-400: #479f6a;
+  --color-brand-500: #2f8253;
+  --color-brand-600: #256a44;
+  --color-brand-700: #1f5537;
+  --color-brand-800: #1a442d;
+  --color-brand-900: #143524;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-display: swap;
+  src: local("IBM Plex Sans");
+}
+
 html,
 body,
 #root {
@@ -12,12 +65,61 @@ body,
 
 body {
   margin: 0;
-  background-color: #fafafa;
-  color: #18181b;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background-color: var(--color-zinc-50);
+  color: var(--color-zinc-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 html.dark body {
-  background-color: #0a0a0a;
-  color: #e4e4e7;
+  background-color: var(--color-zinc-950);
+  color: var(--color-zinc-200);
+}
+
+/* Numerals line up in every table and stat block without per-element classes. */
+table,
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A quieter scrollbar - the default light-on-dark one is loud in a dense UI. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-zinc-300) transparent;
+}
+html.dark * {
+  scrollbar-color: var(--color-zinc-700) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-zinc-300);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+html.dark ::-webkit-scrollbar-thumb {
+  background-color: var(--color-zinc-700);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Keyboard focus stays visible everywhere; mouse clicks stay clean. */
+:focus-visible {
+  outline: 2px solid var(--color-brand-400);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

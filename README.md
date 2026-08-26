@@ -32,6 +32,16 @@ recording officer-confirmed rings in a tamper-evident hash-chained ledger.
 
 ## 1. What this project does
 
+> **What's new in this version.** Detection now finds fraud that isn't a loop
+> (fake invoice mills, and rings that close through shared ownership rather
+> than through an invoice); officers can **dismiss** an alert as well as confirm
+> it, so the system finally has a record of where it was wrong; every upload is
+> kept as its own **dataset** and every detection is a named, dated **run**;
+> a one-page **case report** goes to the officer and their supervisor by
+> email, hashed into the audit ledger; and there are now two **roles** —
+> officers prepare and clear cases, supervisors sanction them. The console is a
+> multi-page application with its own navigation. See §7.1–§7.4.
+
 ### The problem
 
 When a business in India buys goods it pays GST, and can later claim that money
@@ -61,6 +71,16 @@ companies = nodes,  invoices = arrows
         │     then Johnson's algorithm to enumerate loops in what remains.
         │     Result: ~33 candidate loops out of 220 companies, in ~3ms.
         │
+        ├─ 1b. FIND THE FRAUD THAT ISN'T A CIRCLE
+        │     Two shapes cycle detection is blind to, both real:
+        │       · a ring that closes through a shared DIRECTOR or ADDRESS
+        │         instead of through an invoice — A→B→C by bill, where C and A
+        │         are run by the same person. We add those ownership links to
+        │         the graph as edges, and the same cycle search finds them.
+        │       · a FAKE INVOICE MILL: a shell selling to dozens of unrelated
+        │         buyers and buying from nobody. That's a star, not a loop, and
+        │         it is the most common form of real GST fraud.
+        │
         ├─ 2. RANK THEM
         │     Circles alone aren't enough — honest firms trade both ways too
         │     (a retailer returns unsold stock to its distributor). Only 7 of
@@ -76,21 +96,42 @@ companies = nodes,  invoices = arrows
         │     invoices moved with no e-way bill". An officer gets evidence,
         │     not a number.
         │
-        └─ 4. MAKE IT STICK
-              When an officer confirms a ring, the evidence goes into a
-              SHA-256 hash chain. Edit any past record and every block after
-              it breaks, and we can say exactly which one.
+        ├─ 4. LET A HUMAN DECIDE — BOTH WAYS
+        │     The officer confirms an alert as fraud, or clears it as
+        │     legitimate with a reason. Clearing matters as much as
+        │     confirming: it is the only record of where the detector was
+        │     wrong, and it is the training data that lets it improve.
+        │
+        └─ 5. MAKE IT STICK
+              Every decision — confirmed, cleared, or a case report issued to
+              a supervisor — goes into a SHA-256 hash chain, along with the
+              model version and risk threshold that produced it. Edit any past
+              record and every block after it breaks, and we can say exactly
+              which one.
 ```
 
 ### About the data
 
 Real GSTN invoice data is confidential taxpayer information behind government
-data-sharing agreements — there is no legitimate way to obtain it. **This
-project generates its own synthetic trade network with fraud rings injected on
-purpose.** That is a deliberate design decision, not a shortcut: because we know
-the ground truth, we can actually measure whether the detector works. Nothing is
-hardcoded to the synthetic data — swap in real companies and invoices and the
-whole pipeline runs unchanged.
+data-sharing agreements — there is no legitimate way to obtain it. **So we
+fabricate trade networks with the fraud planted on purpose.** That is a
+deliberate design decision, not a shortcut: because we know the ground truth, we
+can actually measure whether the detector works rather than just asserting it
+does.
+
+Two separate generators do this, and the split matters:
+
+- **`synthetic_network.py`** feeds the *model trainer*. It optimises for a clean
+  fraud/not-fraud split with enough hard cases that the model cannot cheat.
+- **`dataset_lab.py`** — the **Dataset Lab** at `/lab` — feeds *people*. It
+  optimises for a spread: obvious fraud, genuinely ambiguous cases, and honest
+  businesses that merely look suspicious. See §5.1.
+
+**The running application never generates its own data.** It only ever holds
+what an officer uploaded — and data from the lab goes in through exactly the
+same upload path, with no shortcut past the validation. Nothing is hardcoded to
+fabricated data: swap in real companies and invoices and the whole pipeline runs
+unchanged.
 
 ---
 
@@ -276,8 +317,11 @@ will try to reach a PostgreSQL server that isn't there.
 
 ## 5.1. Getting a dataset in
 
-The app ships with **no data and no built-in generator** — an officer uploads
-one. Log in, click **Upload CSV** in the header, and provide two files:
+The console ships with **no data**, and it never invents its own — an officer
+uploads it. (The Dataset Lab further down fabricates a file pair to upload, but
+it is a separate page and its output still goes in through this same door.)
+
+Log in, open **Detections → Upload dataset**, and provide two files:
 
 **`companies.csv`**
 
@@ -302,19 +346,64 @@ one. Log in, click **Upload CSV** in the header, and provide two files:
 | `goods_description` | text | |
 | `has_eway_bill` | boolean | `true`/`false`, `1`/`0`, `yes`/`no` |
 
-Uploading **replaces the entire dataset** — companies, invoices, detected
-rings, scores, and the audit ledger. Don't have a CSV pair handy? Run the
-standalone generator script (no Django dependency, only needs `Faker`) that
-was used to produce the demo dataset:
+**Uploads no longer replace anything.** Each one is stored as its own named
+dataset and becomes the active one; previous uploads, their detection runs and
+the audit ledger all survive. Switch between them with the dataset button next
+to the title in the header.
 
-```bash
-pip install Faker
-python generate_dataset.py   # writes companies.csv and invoices.csv
-```
+### No CSV pair handy? Use the Dataset Lab
 
-That script isn't part of this repo (it's a one-off tool, not app code) — ask
-whoever set up the project for it, or write your own generator against the
-schema above.
+**<http://localhost:5173/lab>** — the same port as the dashboard, just a
+different page. Also linked at the bottom of the nav rail and
+inside the upload dialog.
+
+The lab is a separate page that fabricates a whole GST trade network to order.
+It is deliberately outside the console: its own look, no nav rail, no case
+files, and no login needed to generate or download. Nothing it produces is a
+finding about a real business, and it is built so that it can never be mistaken
+for one.
+
+Tell it how big the economy should be and how much of each kind of trouble to
+plant in it:
+
+| Knob | Plants | Lands in |
+|---|---|---|
+| Circular-trade rings | Shell companies invoicing each other in a closed loop, every flag showing | high risk |
+| Fake invoice mills | Sells to dozens of buyers, buys from nobody. No loop to find | high risk |
+| Ambiguous loops | Real loops with only one or two flags each | the grey zone |
+| Borderline sellers | Lopsided books that only just clear the mill detector — some won't | the grey zone |
+| Honest two-way traders | Genuine businesses that form real loops. Flagging these is a *mistake* | low risk |
+
+That last row is the one that matters. Anyone can generate data where every
+fraudster is obvious; a detector tested only on that looks brilliant and is
+worthless. The honest look-alikes are there to catch us out.
+
+**The lab then marks its own work — using the real detector.** After generating,
+it runs the actual pipeline (same graph builder, same Tarjan/Johnson, same mill
+rules, same XGBoost model) over the result and shows you:
+
+- how the alerts scored — how many high, grey-zone and low
+- **how much of the planted fraud was actually surfaced** (`5 of 5`)
+- **how many honest businesses got pushed over the high-risk line** (`0`)
+
+It ships an `answer_key.csv` recording what every company really was. The
+detector never sees it. If it plants five rings and finds three, the screen says
+*3 of 5* in plain sight.
+
+Three ways out:
+
+| Button | What it does | Account needed? |
+|---|---|---|
+| **Generate & test** | Builds it and runs detection over it, in memory. Saves nothing | no |
+| **Download** | A zip: `companies.csv`, `invoices.csv`, `answer_key.csv` and a note | no |
+| **Load straight into the console** | Creates it as a dataset and makes it active | **yes** |
+
+Generating fabricated data needs no login — putting it behind the login of the
+console it exists to fill would be a circle. Writing to the database does, and
+it goes in through exactly the same validation an officer's upload does.
+
+**The same seed always rebuilds the same dataset**, byte for byte, so a demo can
+be repeated and a bug report can be reproduced.
 
 ---
 
@@ -330,10 +419,11 @@ docker-compose exec backend python manage.py test
 cd backend && python manage.py test
 ```
 
-Expect **30 tests, OK**, in roughly 13 seconds. They cover cycle detection
+Expect **111 tests, OK**, in roughly 14 seconds. They cover cycle detection
 (every injected ring is recovered across multiple generator seeds), risk scoring
-(fraud rings outrank benign loops), and the ledger (tampering is detected even
-when the forger recomputes the edited block's own hash).
+(fraud rings outrank benign loops), the ledger (tampering is detected even when
+the forger recomputes the edited block's own hash), ownership-closed rings, the
+mill detector, the officer review loop, dataset history, and the case report.
 
 ### Check the API is alive
 
@@ -355,12 +445,17 @@ running.
 
 **A few interface things worth knowing before your first look:**
 
-- **Light/dark toggle** — the sun/moon button at the top-left of the header.
-  Choice persists across reloads (`localStorage`). Defaults to dark.
+- **The console is a real multi-page app.** A navigation rail on the left runs
+  Overview · Network · Detections · Reports · Audit ledger · Team (supervisors
+  only) · Settings. Each has its own URL and the browser back button works.
+- **Your account** is the button at the top right: click it for your profile,
+  your role, settings and sign out.
+- **Light/dark toggle** — the sun/moon button in the top bar. Choice persists
+  across reloads (`localStorage`). Defaults to dark.
 - **Collapsible alerts panel** — the lines icon at the top of the left panel
   collapses it to a slim strip and back, for when the graph needs the room.
-- **Upload CSV** opens a two-file drag-and-drop modal (companies + invoices).
-  Both files are required before **Run detection** unlocks.
+- **Upload dataset** lives on the Detections page — a two-file drag-and-drop
+  (companies + invoices). Both files are required.
 - **The graph view is deliberately Obsidian-style**, not a generic force
   layout: node labels are hidden when zoomed out and fade in as you zoom into
   a region (so a 250-company network doesn't render as an unreadable wall of
@@ -416,6 +511,173 @@ will differ if you upload a different one.
 
 ---
 
+## 7.1. Fraud that isn't a loop
+
+Cycle detection only finds closed loops, which means it is structurally blind
+to some of the most common GST fraud. Two extra detectors close that gap, and
+both appear in the same alerts queue.
+
+**Fake invoice mills** (`fraud_engine/mill_detection.py`). A shell that sells
+to dozens of unrelated real businesses and buys from almost nobody — it never
+acquired anything it claims to have sold. That is a *star*, not a loop. The
+detector gates on one-way flow, buyer count and value, then scores six named
+signals (one-way flow, buyer spread, missing e-way bills, recent registration,
+under-declared turnover, round amounts).
+
+This detector is **rules, not ML, on purpose**: the XGBoost model was trained
+on shells inside generated rings and has never seen a labelled mill, so asking
+it to score one would be inference far outside its training distribution. Every
+mill score reads back as the sentences that produced it. Once officer decisions
+accumulate on mill alerts, these rules become the baseline a learned model has
+to beat.
+
+**Rings that close through ownership** (`graph_builder._add_control_edges`).
+A → B → C by invoice, where C and A share a registered address or a director,
+*is* a circular-trade ring — the loop closes through control instead of through
+a bill, which is the smarter way to run it because it leaves no closing invoice
+to find. Companies sharing an address or director are linked with
+`relation="control"` edges, and the same Tarjan/Johnson search finds these rings
+with no other change.
+
+Two rules keep that honest: a reported cycle must contain **at least one
+invoice hop** and **at most one control hop**, otherwise a group of companies
+at one address would register as a "ring" purely for being co-located.
+
+> **A methodological note worth knowing.** The model's four cycle features were
+> learned on a pure invoice graph, so feeding it cycle counts inflated by
+> control edges would score outside its training distribution. The pipeline
+> therefore builds **two** graphs: features come from the invoice-only graph,
+> exactly as at training time, while the reported alerts come from the
+> control-augmented one. See the comment in `fraud_engine/pipeline.py`.
+
+---
+
+## 7.2. The review loop
+
+Previously an officer could only ever tell the system it was **right**. There
+was a "Confirm as fraudulent" button and nothing else, so the system held no
+negative examples, could not measure its own precision, and could never improve.
+
+Every alert now has three states — **pending**, **confirmed**, **dismissed** —
+and the evidence panel offers both actions:
+
+| Action | What it records |
+|---|---|
+| **Confirm as fraudulent** | Full evidence bundle → ledger block, plus the model version and threshold that produced the score |
+| **Not fraud** | A structured reason code + optional note → ledger block, and a labelled negative example |
+
+The dismissal reasons are the useful part: *genuine two-way trade · shell but
+not circular · already under investigation · insufficient evidence · data
+quality problem · other*. If most dismissals say "genuine two-way trade", that
+is a specific, fixable model failure rather than a vague sense that precision
+is poor.
+
+Decisions **carry forward** between runs over the same dataset, keyed by the
+alert's order-independent signature — nobody re-reviews work they already did.
+
+**Nothing here ever auto-blocks a refund.** Every enforcement action stays a
+human decision; the machine does the watching, not the deciding.
+
+---
+
+## 7.3. Datasets, runs and the supervisor's report
+
+**Datasets.** Every upload is kept. Pick a past upload from the dataset button
+in the header and its detection runs, alerts and scores all come back with it.
+The same GSTIN may appear in several datasets (uniqueness is per dataset).
+
+**Detection runs.** Each "Run detection" creates one named, dated
+`DetectionRun` recording what was found, which model version found it and at
+what threshold. Re-running never erases the previous run, so you can compare.
+They are listed under the **History & reports** tab.
+
+**Case reports.** When an officer has worked through a run's alerts, *Issue
+report* builds a one-page summary — confirmed cases highest-risk-first with the
+plain-English reason for each, the value at risk, and a breakdown of what was
+cleared and why — and emails it to the officer and every configured supervisor.
+
+The report's SHA-256 content hash is written to the audit ledger, so the
+document a supervisor approved can later be proven to be the document on file.
+
+Configure delivery in `.env`:
+
+```bash
+EMAIL_HOST=smtp.gmail.com          # blank => printed to the backend console
+EMAIL_PORT=587
+EMAIL_HOST_USER=you@gmail.com
+EMAIL_HOST_PASSWORD=your-app-password   # Gmail needs an App Password, not your login
+EMAIL_USE_TLS=True
+REPORT_SUPERVISOR_EMAILS=supervisor@dept.gov.in
+```
+
+With `EMAIL_HOST` blank, reports print to the backend console instead of being
+sent — so the whole workflow is demonstrable before any credentials exist.
+Anyone in the `Supervisors` Django group who has an email address on their
+account is copied automatically, in addition to `REPORT_SUPERVISOR_EMAILS`.
+
+> **Said plainly, because it matters:** the report body carries GSTINs, company
+> names and risk assessments, and SMTP is not a channel confidential taxpayer
+> data should cross. A real deployment would email a short notification plus an
+> authenticated link back into the application. That is a deliberate demo
+> shortcut, not an oversight.
+
+---
+
+## 7.4. Roles: officers and supervisors
+
+Two roles, mirroring how enforcement actually works.
+
+| | Officer | Supervisor |
+|---|---|---|
+| Review alerts, read the evidence | ✓ | ✓ |
+| **Clear** an alert as not fraud | ✓ | ✓ |
+| Upload data, run detection | ✓ | ✓ |
+| Issue case reports | ✓ | ✓ |
+| **Confirm** an alert as fraudulent | — | ✓ |
+| See every officer's activity | — | ✓ |
+| Change detection settings | — | ✓ |
+
+**Why the split falls there.** Confirming an alert is the act that starts
+recovery proceedings against a real business, so it is the one decision that
+warrants a second, more senior pair of eyes. Clearing deliberately stays with
+the officer: being able to say *"I looked, this is a normal business"* is the
+feedback the detector needs, and gating it behind a supervisor would mean it
+never happens.
+
+**How membership works.** Roles are Django Groups (`Officers`, `Supervisors`),
+so they are administered from `/admin/` or from the in-app **Team** page — no
+code change. A superuser is always treated as a supervisor, so the account
+created by `createsuperuser` can never lock itself out of confirming. A
+supervisor cannot demote themselves, for the same reason.
+
+Every rule is enforced server-side (`core/permissions.py`). The UI reads a
+permissions map from `/api/auth/me/` so it can avoid showing an action that
+would only be refused — but hiding a button is a courtesy, never a control.
+
+### The Team page
+
+Supervisor-only. Every account with what they have actually been doing —
+confirmed, cleared, runs, reports, last decision — plus a merged activity feed
+across the whole team. It is what makes sanctioning a case responsible: you can
+see who prepared it and what else they have been clearing.
+
+### Settings you can change in the app
+
+The **Settings** page holds detection policy and report delivery: organisation
+name, supervisor email addresses, the high-risk threshold, the invoice-mill
+alert threshold, and the longest ring to search for.
+
+Each value resolves **database → `.env` → built-in default**, and the page shows
+which of the three each one is currently coming from. Clearing a field removes
+the override so it falls back to `.env`. Only a supervisor can change them;
+officers see the policy in force, because it shapes every alert they get.
+
+> Email *credentials* stay in `.env` and are deliberately not editable in the
+> app — they are secrets, and secrets do not belong in a database the
+> application can read back.
+
+---
+
 ## 8. What gets downloaded
 
 So nobody is surprised by the install size or wonders what a package is for.
@@ -441,6 +703,7 @@ Roughly **700 MB – 1 GB** installed, mostly `xgboost`, `shap`, `numba` and
 | Package | Why it's here |
 |---|---|
 | `react`, `react-dom` | UI |
+| `react-router-dom` | Real routed pages, so the back button works |
 | `vite`, `@vitejs/plugin-react` | Dev server and build tool |
 | `cytoscape` | The interactive network graph |
 | `axios` | API calls |
@@ -478,23 +741,39 @@ sih26-fraud-detection/
 │   ├── Dockerfile
 │   ├── config/                 # Django settings, root URLs, WSGI
 │   │
-│   ├── core/                   # ── APP 1: the base data model + auth/upload ──
-│   │   ├── models.py           #    Company (nodes) + Invoice (edges)
+│   ├── core/                   # ── APP 1: data model, auth, roles, settings ──
+│   │   ├── models.py           #    Dataset, Company, Invoice, AppSetting
+│   │   ├── roles.py            #    who is an officer, who is a supervisor
+│   │   ├── permissions.py      #    IsSupervisor, used on the gated endpoints
+│   │   ├── settings_store.py   #    DB → .env → default resolution
+│   │   ├── team_views.py       #    profile, team overview, activity, settings
 │   │   ├── serializers.py
-│   │   ├── views.py             #    also: dataset upload, login/logout/whoami
-│   │   └── csv_import.py       #    parses+loads officer-uploaded CSVs
+│   │   ├── views.py             #    also: dataset CRUD, login/logout/whoami
+│   │   ├── csv_import.py       #    parses+loads officer-uploaded CSVs
+│   │   └── management/commands/
+│   │       ├── setup_accounts.py  # the team's logins + roles, idempotent
+│   │       └── reset_data.py      # wipe case data, keep the accounts
 │   │
 │   └── fraud_engine/           # ── APP 2: everything detection-related ──
-│       ├── graph_builder.py    #    DB → NetworkX DiGraph
+│       ├── graph_builder.py    #    DB → NetworkX DiGraph (+ ownership edges)
 │       ├── cycle_detection.py  #    Tarjan SCC pre-filter + Johnson's
+│       ├── mill_detection.py   #    NON-LOOP fraud: fake invoice mills
 │       ├── risk_scoring.py     #    features → XGBoost → SHAP explanations
+│       ├── pipeline.py         #    one detection pass = one named DetectionRun
+│       ├── reporting.py        #    the supervisor's one-page case report
+│       ├── mailer.py           #    SMTP delivery + failure recording
+│       ├── settings_helpers.py #    risk threshold + supervisor recipients
 │       ├── ledger.py           #    SHA-256 hash chain
-│       ├── models.py           #    FlaggedRing, RiskScore, LedgerBlock
+│       ├── models.py           #    DetectionRun, FlaggedRing, RiskScore,
+│       │                       #    LedgerBlock, CaseReport
 │       ├── views.py            #    all fraud API endpoints
-│       ├── tests.py            #    30 tests in 3 classes
+│       ├── tests.py            #    111 tests in 13 classes
 │       ├── models_artifacts/   #    the committed pretrained model
 │       ├── synthetic_network.py     # generator used ONLY by tests + training,
 │       │                            # never to seed the running app
+│       ├── dataset_lab.py     #    THE DATASET LAB: fabricated networks with a
+│       │                      #    controllable risk mix + an answer key
+│       ├── lab_views.py       #    its API. Open to generate, gated to load
 │       └── management/commands/
 │           └── train_risk_model.py  # optional retraining
 │
@@ -502,19 +781,38 @@ sih26-fraud-detection/
 │   ├── package.json
 │   └── src/
 │       ├── api.js              # axios instance + every API call
-│       ├── App.jsx             # auth gate: shows Login or Dashboard; owns theme
+│       ├── App.jsx             # router + the shared investigation state
+│       ├── useAuth.jsx         # signed-in account, role, permissions map
 │       ├── useTheme.js         # dark/light mode hook, persisted to localStorage
 │       ├── icons.jsx           # dependency-free inline SVG icons
+│       ├── index.css           # design tokens: Plex type + blue-shifted neutrals
 │       ├── Login.jsx           # officer sign-in page
-│       ├── Dashboard.jsx       # three-pane layout + all state + CSV upload modal
+│       ├── lab/                # THE DATASET LAB — deliberately not part of
+│       │   ├── LabPage.jsx     # the console: own page, own look, own client
+│       │   └── labApi.js
+│       ├── layout/
+│       │   ├── AppShell.jsx        # nav rail + top bar + routed outlet
+│       │   └── UserMenu.jsx        # account dropdown: profile, role, sign out
+│       ├── pages/
+│       │   ├── OverviewPage.jsx    # where you land: counters + queue preview
+│       │   ├── NetworkPage.jsx     # queue + graph + evidence (three panes)
+│       │   ├── DetectionsPage.jsx  # run history, upload, run detection
+│       │   ├── ReportsPage.jsx     # issued case reports + preview
+│       │   ├── LedgerPage.jsx      # the audit chain
+│       │   ├── TeamPage.jsx        # SUPERVISOR ONLY: who did what
+│       │   ├── SettingsPage.jsx    # editable detection policy
+│       │   └── ProfilePage.jsx     # your details, permissions, password
 │       └── components/
+│           ├── ui.jsx              # shared primitives (Card, Button, Stat, …)
 │           ├── AlertsFeed.jsx      # ranked work queue (left), collapsible
 │           ├── GraphView.jsx       # Cytoscape network, Obsidian-style (centre)
-│           ├── CompanyDetail.jsx   # evidence panel (right)
+│           ├── CompanyDetail.jsx   # evidence panel + confirm/dismiss (right)
+│           ├── DatasetPicker.jsx   # switch between uploads
 │           └── LedgerViewer.jsx    # audit chain
 │
 └── docs/
-    └── UNDERSTAND_ME.md        # full technical walkthrough
+    ├── UNDERSTAND_ME.md        # full technical walkthrough
+    └── 10-year-old explanation of all the backend that is happening.md
 ```
 
 Two Django apps, deliberately: `core` holds the data, `fraud_engine` holds the
@@ -524,37 +822,71 @@ detection. Each is short enough to read top to bottom.
 
 ## 10. API reference
 
+Endpoints marked **S** are supervisor-only; everything else needs any
+authenticated officer account.
+
 | Method | Endpoint | Auth | Purpose |
 |---|---|---|---|
 | POST | `/api/auth/login/` | — | `{username, password}` → `{token, username}` |
 | POST | `/api/auth/logout/` | ✓ | Invalidate the caller's token |
 | GET | `/api/auth/whoami/` | ✓ | Validate a stored token |
-| POST | `/api/data/upload/` | ✓ | `companies` + `invoices` CSV files → replaces the dataset |
-| GET | `/api/companies/` | ✓ | Companies (paginated, `?search=`, `?page_size=`) |
-| GET | `/api/companies/{id}/` | ✓ | Company + risk score + explanation + ring membership |
+| GET/PATCH | `/api/auth/me/` | ✓ | Your profile, role and permissions map; update your own name/email |
+| POST | `/api/auth/change-password/` | ✓ | `{current_password, new_password}` → a fresh token |
+| GET | `/api/team/` | **S** | Every account with its review activity |
+| GET | `/api/team/activity/` | **S** | Merged feed of decisions, runs and reports |
+| POST | `/api/team/{id}/role/` | **S** | `{"role": "officer"\|"supervisor"}` |
+| GET | `/api/settings/` | ✓ | Every configurable value and where it came from |
+| PATCH | `/api/settings/update/` | **S** | Change detection policy or report recipients |
+| POST | `/api/data/upload/` | ✓ | `companies` + `invoices` CSV files (+ optional `name`) → a new dataset, made active |
+| GET | `/api/datasets/` | ✓ | Every upload, newest first |
+| PATCH | `/api/datasets/{id}/` | ✓ | Rename a dataset |
+| POST | `/api/datasets/{id}/activate/` | ✓ | Switch which dataset the app is looking at |
+| DELETE | `/api/datasets/{id}/delete/` | ✓ | Remove a dataset (refused if a report was issued from it) |
+| GET | `/api/companies/` | ✓ | Companies in the active dataset (paginated, `?search=`, `?page_size=`) |
+| GET | `/api/companies/{id}/` | ✓ | Company + risk score + explanation + alert membership |
 | GET | `/api/invoices/` | ✓ | Invoices (`?company=` / `?seller=` / `?buyer=`) |
-| POST | `/api/fraud/rebuild-graph/` | ✓ | Rebuild graph, run cycle detection, store rings |
-| POST | `/api/fraud/score/` | ✓ | Feature engineering + XGBoost + SHAP over current rings |
-| GET | `/api/fraud/rings/` | ✓ | Flagged rings, highest risk first |
-| GET | `/api/fraud/rings/{id}/` | ✓ | Ring detail: companies, invoices, score, explanation |
-| POST | `/api/fraud/rings/{id}/confirm/` | ✓ | Confirms as the *authenticated* officer → appends a ledger block |
+| POST | `/api/fraud/run/` | ✓ | Run both detectors + scoring as one named `DetectionRun` |
+| GET | `/api/fraud/runs/` | ✓ | Every run, newest first (`?dataset=`) |
+| GET | `/api/fraud/runs/{id}/` | ✓ | One run's counters and provenance |
+| DELETE | `/api/fraud/runs/{id}/delete/` | ✓ | Discard a run (refused if it produced a report) |
+| POST | `/api/fraud/runs/{id}/report/` | ✓ | Build the case report, hash it into the ledger, email it |
+| GET | `/api/fraud/rings/` | ✓ | Alerts for a run, highest risk first (`?run=`, `?status=`, `?kind=`) |
+| GET | `/api/fraud/rings/{id}/` | ✓ | Alert detail: companies, invoices, score, explanation |
+| POST | `/api/fraud/rings/{id}/confirm/` | **S** | Confirms as the *authenticated* supervisor → appends a ledger block |
+| POST | `/api/fraud/rings/{id}/dismiss/` | ✓ | `{reason, note}` — clears an alert as not fraud → appends a ledger block |
+| GET | `/api/fraud/dismissal-reasons/` | ✓ | The reason codes `dismiss` accepts |
 | GET | `/api/fraud/status/` | ✓ | Dashboard summary counters |
 | GET | `/api/fraud/graph/` | ✓ | Whole network in one Cytoscape-shaped payload |
+| GET | `/api/reports/` | ✓ | Issued case reports (`?run=`) |
+| GET | `/api/reports/{id}/` | ✓ | One report, including the rendered HTML |
+| POST | `/api/reports/{id}/send/` | ✓ | Retry delivery after fixing SMTP settings |
+| GET | `/api/reports/mail-status/` | ✓ | Is SMTP usable, and who would be copied in |
+| GET | `/api/lab/presets/` | — | Dataset Lab starting points and limits |
+| POST | `/api/lab/preview/` | — | Generate + run the real detector over it. Saves nothing |
+| POST | `/api/lab/download/` | — | The same, as a zip of CSVs plus an answer key |
+| POST | `/api/lab/load/` | ✓ | Generate and create it as a dataset, made active |
 | GET | `/api/ledger/blocks/` | ✓ | All ledger blocks |
 | GET | `/api/ledger/verify/` | ✓ | Walk the chain, report whether it's intact |
 
-Everything except login requires `Authorization: Token <token>`. Driving the
-pipeline without the UI:
+Everything except login and the three open Dataset Lab endpoints requires
+`Authorization: Token <token>`. The lab's `presets`/`preview`/`download` read
+nothing from the database and produce only fabricated CSV text, which is why
+they need no account; `lab/load` writes rows, so it does. Driving the pipeline
+without the UI:
 
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/login/ \
   -d "username=you&password=yourpass" | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
+AUTH="Authorization: Token $TOKEN"
 
-curl -H "Authorization: Token $TOKEN" -X POST http://localhost:8000/api/fraud/rebuild-graph/
-curl -H "Authorization: Token $TOKEN" -X POST http://localhost:8000/api/fraud/score/
-curl -H "Authorization: Token $TOKEN" http://localhost:8000/api/fraud/rings/
-curl -H "Authorization: Token $TOKEN" -X POST http://localhost:8000/api/fraud/rings/1/confirm/
-curl -H "Authorization: Token $TOKEN" http://localhost:8000/api/ledger/verify/
+curl -H "$AUTH" -X POST http://localhost:8000/api/fraud/run/ \
+  -H "Content-Type: application/json" -d '{"name":"Detection 1"}'
+curl -H "$AUTH" http://localhost:8000/api/fraud/rings/
+curl -H "$AUTH" -X POST http://localhost:8000/api/fraud/rings/1/confirm/
+curl -H "$AUTH" -X POST http://localhost:8000/api/fraud/rings/2/dismiss/ \
+  -H "Content-Type: application/json" -d '{"reason":"genuine_trade","note":"Known supplier."}'
+curl -H "$AUTH" -X POST http://localhost:8000/api/fraud/runs/1/report/
+curl -H "$AUTH" http://localhost:8000/api/ledger/verify/
 ```
 
 Every endpoint requires an authenticated officer account (Django's built-in
@@ -570,13 +902,57 @@ your venv active on Path B.
 
 | Task | Command |
 |---|---|
-| Load or replace the dataset | Upload CSV button in the dashboard (§5.1) |
-| Create an officer login | `python manage.py createsuperuser` |
+| Load a dataset | Upload CSV button in the dashboard (§5.1) |
+| Fabricate a test dataset | <http://localhost:5173/lab> (§5.1) |
+| Switch dataset | Dataset button next to the title in the header |
+| Create the first admin | `python manage.py createsuperuser` |
+| Create the team's accounts | `python manage.py setup_accounts` (see below) |
+| Wipe case data, keep accounts | `python manage.py reset_data --yes` |
 | Run the tests | `python manage.py test` |
 | Run one test class | `python manage.py test fraud_engine.tests.LedgerTests` |
 | Retrain the model (optional) | `python manage.py train_risk_model` |
 | Apply new migrations | `python manage.py migrate` |
 | After changing a model | `python manage.py makemigrations` |
+
+### Setting up the team's accounts
+
+`createsuperuser` makes one account, interactively, with no role. A department
+needs several with the right roles attached, and a team needs to recreate them
+identically on someone else's laptop:
+
+```bash
+python manage.py setup_accounts \
+  --supervisor 'supervisor:Vikram Mehta:vikram@example.gov.in' \
+  --officer    'officer1:Anita Rao:anita@example.gov.in' \
+  --officer    'officer2:Raj Kumar:raj@example.gov.in'
+```
+
+The format is `username:Full Name:email`; name and email are both optional and
+can be filled in later by re-running the command. It prints a generated
+password for each **new** account, once — Django stores only the hash, so
+nothing can read them back out afterwards.
+
+It is **idempotent**: run it twice and you get the same accounts, not six. An
+existing account has its name, email and role brought into line, but its
+password is left alone — silently changing someone's password is not an update,
+it is a lockout. Pass `--reset-password` when you actually mean to. Other flags:
+`--password` to set one you choose, and `--remove <username>` to delete an
+account (it refuses to delete a superuser).
+
+Email matters for more than the login: a case report is sent to the officer who
+issued it *and* to every supervisor with an email on their account.
+
+### Clearing the data before a demo
+
+```bash
+python manage.py reset_data --yes
+```
+
+Deletes datasets, companies, invoices, detection runs, alerts, ledger blocks
+and case reports — and **keeps the accounts and their roles**, which is the
+difference between this and `flush`. Add `--settings-too` to also drop database
+setting overrides so policy falls back to `.env`. Use `--dry-run` to see the
+counts first; without `--yes` it refuses to do anything.
 
 Docker-specific:
 
@@ -629,9 +1005,20 @@ Shouldn't happen — `frontend/.dockerignore` excludes `node_modules` precisely 
 host-built native binaries never get copied into the Linux image. If you hit it
 anyway, `docker-compose build --no-cache frontend`.
 
-**"Loops found" is 33 but everything shows UNSCORED**
-Detection ran but scoring didn't. The "Run detection" button does both; if you
-called `/rebuild-graph/` directly via curl, follow it with `/score/`.
+**Reports say "SMTP is not configured"**
+`EMAIL_HOST` is blank in `.env`, so reports are printed to the backend terminal
+instead of being emailed. That is the default and it is deliberate — fill in the
+`EMAIL_*` values (§7.3) to send them for real. On Gmail, `EMAIL_HOST_PASSWORD`
+must be an **App Password**, not your normal account password.
+
+**A report says "No recipients"**
+Your officer account has no email address, and `REPORT_SUPERVISOR_EMAILS` is
+empty. Set one in `/admin/` under Users, or add supervisors to `.env`.
+
+**Far more rings than before after upgrading**
+Expected. Ownership edges (§7.1) surface rings that close through a shared
+director or address, which invoice-only detection could not see. They carry a
+"closes via shared ownership" badge, and the queue is still ranked by risk.
 
 **`pip install` fails on `shap` or `numba`**
 Almost always a too-new Python. `numba` lags new releases by months. Use Python
@@ -663,7 +1050,7 @@ shout and we'll fix it in a commit.
   file** — otherwise everyone else's database breaks.
 - Changed `requirements.txt` or `package.json`? Tell the team, and rebuild with
   `docker-compose up --build`.
-- Run `python manage.py test` before pushing. All 30 should pass.
+- Run `python manage.py test` before pushing. All 83 should pass.
 - `fraud_engine/synthetic_network.py` (used by tests and `train_risk_model`,
   never by the running app) is seeded, so it's reproducible: same seed, same
   network.
@@ -679,6 +1066,11 @@ shout and we'll fix it in a commit.
 |---|---|
 | The test/training data generator | `backend/fraud_engine/synthetic_network.py` |
 | The CSV upload format or validation | `backend/core/csv_import.py` |
+| Non-loop (mill) detection | `backend/fraud_engine/mill_detection.py` |
+| Ownership/control edges | `_add_control_edges()` in `graph_builder.py` |
+| What one detection run does | `backend/fraud_engine/pipeline.py` |
+| The supervisor report's wording or design | `backend/fraud_engine/reporting.py` |
+| Email delivery | `backend/fraud_engine/mailer.py` + `.env` |
 | How cycles are found | `backend/fraud_engine/cycle_detection.py` |
 | Risk features or the model | `backend/fraud_engine/risk_scoring.py` |
 | The plain-English explanation wording | `_describe()` in `risk_scoring.py` |
@@ -687,6 +1079,10 @@ shout and we'll fix it in a commit.
 | The graph's look and behaviour | `frontend/src/components/GraphView.jsx` |
 | The login page | `frontend/src/Login.jsx` |
 | Light/dark theme | `frontend/src/useTheme.js` |
+| Who can do what | `backend/core/roles.py` + `permissions.py` |
+| Editable settings | `backend/core/settings_store.py` |
+| Navigation / app frame | `frontend/src/layout/AppShell.jsx` |
+| Shared UI primitives | `frontend/src/components/ui.jsx` |
 
 **One thing worth understanding before you touch the ML.** The risk model scores
 *only* companies that cycle detection already surfaced. That boundary is
@@ -699,7 +1095,7 @@ information. If you widen what gets scored, you will reintroduce that bug.
 **And a claim to be careful with.** Our held-out ROC AUC is 0.9999. Do not
 present that as real-world accuracy — our fraud comes from a known generative
 process, so a model with 17 features separates it almost perfectly. What it
-demonstrates is that the pipeline is wired correctly. Section 11 of
+demonstrates is that the pipeline is wired correctly. Section 12 of
 `docs/UNDERSTAND_ME.md` has honest answers ready for judges who push on this.
 
 ---
@@ -712,3 +1108,12 @@ features means and why it signals fraud, how the hash chain works and what it
 does *not* protect against, a two-minute judge pitch with answers to likely
 pushback, an honest limitations section covering what production would
 require, and a full tech stack breakdown at the end.
+
+**[docs/10-year-old explanation of all the backend that is happening.md](docs/10-year-old%20explanation%20of%20all%20the%20backend%20that%20is%20happening.md)**
+— every part of the backend in plain English, no maths and no jargon: what the
+fraud actually is, why a ring is a loop and a mill is a star, how Tarjan and
+Johnson work as an idea, what XGBoost and SHAP are really doing, what the audit
+ledger can and cannot protect against, and exactly what goes in the
+supervisor's report and where it is sent. Start here if the technical
+walkthrough is heavy going — or if you need to explain the project to someone
+in two minutes.

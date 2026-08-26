@@ -26,16 +26,31 @@ WHY THE LENGTH BOUND
     settings.MAX_RING_SIZE). If an SCC is small we let Johnson's run free and
     filter afterwards; if it is large we push the bound down into the search
     itself so it can never blow up.
+
+RINGS THAT CLOSE THROUGH OWNERSHIP
+    If the graph carries control edges (see graph_builder), a cycle may close
+    through a shared director or registered address rather than through an
+    invoice: A -> B -> C by bill, and C and A run by the same person. That is a
+    real ring, and one that pure invoice-based detection cannot see at all.
+
+    Two rules keep this honest. A reported cycle must contain at least one
+    invoice hop, and at most MAX_CONTROL_HOPS control hops - otherwise a group
+    of companies sharing one address would register as a "ring" purely because
+    they are all linked to each other, which says nothing about trade.
 """
 from __future__ import annotations
 
 import networkx as nx
-from django.conf import settings
 
 # Above this size, an SCC gets the length-bounded search instead of unbounded
 # Johnson's. Chosen so ordinary demo-scale components stay on the exact path.
 UNBOUNDED_SCC_NODE_LIMIT = 25
 UNBOUNDED_SCC_EDGE_LIMIT = 120
+
+# A genuine circular-trade ring is a chain of real invoices that closes. One
+# ownership link closing the loop is the pattern we are hunting; several means
+# we are looking at an address cluster, not a trade cycle.
+MAX_CONTROL_HOPS = 1
 
 
 def canonical_cycle(cycle: list[int]) -> tuple[int, ...]:
@@ -52,6 +67,34 @@ def canonical_cycle(cycle: list[int]) -> tuple[int, ...]:
     return tuple(cycle[start:] + cycle[:start])
 
 
+def hops(cycle: list[int]) -> list[tuple[int, int]]:
+    """The consecutive (from, to) pairs of a cycle, including the closing hop."""
+    return list(zip(cycle, cycle[1:] + cycle[:1]))
+
+
+def _relation_counts(graph: nx.DiGraph, cycle: list[int]) -> tuple[int, int]:
+    """(invoice hop count, control hop count) for one cycle."""
+    invoice_hops = control_hops = 0
+    for a, b in hops(cycle):
+        data = graph.get_edge_data(a, b) or {}
+        if data.get("relation", "invoice") == "control":
+            control_hops += 1
+        else:
+            invoice_hops += 1
+    return invoice_hops, control_hops
+
+
+def is_reportable(graph: nx.DiGraph, cycle: list[int]) -> bool:
+    """
+    Whether a raw cycle is worth reporting as a candidate ring.
+
+    Always true for a pure invoice graph. Only bites when control edges are
+    present: see the module docstring.
+    """
+    invoice_hops, control_hops = _relation_counts(graph, cycle)
+    return invoice_hops >= 1 and control_hops <= MAX_CONTROL_HOPS
+
+
 def find_cycles(graph: nx.DiGraph, max_length: int | None = None) -> list[list[int]]:
     """
     Return every simple directed cycle up to `max_length`, de-duplicated.
@@ -60,7 +103,9 @@ def find_cycles(graph: nx.DiGraph, max_length: int | None = None) -> list[list[i
     surface at the top of an investigator's queue.
     """
     if max_length is None:
-        max_length = getattr(settings, "MAX_RING_SIZE", 6)
+        from .settings_helpers import max_ring_size
+
+        max_length = max_ring_size()
 
     seen: set[tuple[int, ...]] = set()
     cycles: list[list[int]] = []
@@ -91,6 +136,8 @@ def find_cycles(graph: nx.DiGraph, max_length: int | None = None) -> list[list[i
             key = canonical_cycle(cycle)
             if key in seen:
                 continue
+            if not is_reportable(graph, list(key)):
+                continue
             seen.add(key)
             cycles.append(list(key))
 
@@ -107,17 +154,27 @@ def cycle_evidence(graph: nx.DiGraph, cycle: list[int]) -> dict:
     `amount_cv` (coefficient of variation of the hop amounts) is the key
     number. Real trade adds margin at every step so amounts vary; fraudulent
     circular billing passes almost the same figure around the loop, driving
-    the CV towards zero.
+    the CV towards zero. Only invoice hops feed it - a control hop carries no
+    amount, and counting its zero would make every mixed ring look uniform.
     """
-    hops = list(zip(cycle, cycle[1:] + cycle[:1]))
-
     amounts: list[float] = []
     invoice_ids: list[int] = []
     invoice_count = 0
     eway_missing = 0
+    control_links: list[dict] = []
 
-    for a, b in hops:
+    for a, b in hops(cycle):
         data = graph.get_edge_data(a, b) or {}
+        if data.get("relation", "invoice") == "control":
+            control_links.append(
+                {
+                    "from": a,
+                    "to": b,
+                    "shared_via": data.get("shared_via", []),
+                    "shared_value": data.get("shared_value", ""),
+                }
+            )
+            continue
         amounts.append(float(data.get("total_amount", 0.0)))
         invoice_ids.extend(data.get("invoice_ids", []))
         invoice_count += int(data.get("invoice_count", 0))
@@ -132,6 +189,7 @@ def cycle_evidence(graph: nx.DiGraph, cycle: list[int]) -> dict:
         amount_cv = 1.0
 
     return {
+        "kind": "ring",
         "company_ids": list(cycle),
         "length": len(cycle),
         "hop_amounts": [round(a, 2) for a in amounts],
@@ -141,6 +199,11 @@ def cycle_evidence(graph: nx.DiGraph, cycle: list[int]) -> dict:
         "invoice_count": invoice_count,
         "eway_missing_count": eway_missing,
         "eway_missing_ratio": round(eway_missing / invoice_count, 4) if invoice_count else 0.0,
+        # How the loop closes. "control" means at least one hop was a shared
+        # director or address rather than a bill - a ring that invoice-only
+        # detection is structurally unable to find.
+        "closure": "control" if control_links else "invoice",
+        "control_links": control_links,
     }
 
 

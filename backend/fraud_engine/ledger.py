@@ -205,10 +205,19 @@ def build_ring_payload(ring, companies, invoices, officer: str = "demo-officer")
     Everything needed to reconstruct the decision later is captured inline
     rather than referenced by id, so the block stays meaningful even if the
     underlying rows are later changed.
+
+    The `model` section is what makes this auditable years later. It records
+    which model version and which policy threshold produced the score the
+    officer was looking at when they signed off. Without it you can prove the
+    evidence is unaltered but not what actually generated the flag - and a
+    silently promoted model would leave no trace at all.
     """
+    run = getattr(ring, "run", None)
     return {
         "record_type": "confirmed_fraud_ring",
         "ring_id": ring.id,
+        "pattern_kind": getattr(ring, "kind", "ring"),
+        "closure": getattr(ring, "closure", "invoice"),
         "confirmed_by": officer,
         "confirmed_at": datetime.now(timezone.utc).isoformat(),
         "detected_at": ring.detected_at.isoformat() if ring.detected_at else None,
@@ -231,4 +240,73 @@ def build_ring_payload(ring, companies, invoices, officer: str = "demo-officer")
         "invoice_count": len(invoices),
         "total_cycle_value": str(ring.total_cycle_value),
         "explanation": ring.explanation or [],
+        "shape_evidence": getattr(ring, "evidence", {}) or {},
+        "model": {
+            "version": getattr(run, "model_version", "") if run else "",
+            "trained_at": getattr(run, "model_trained_at", "") if run else "",
+            "risk_threshold": getattr(run, "risk_threshold", None) if run else None,
+            "detection_run": getattr(run, "name", "") if run else "",
+            "detection_run_id": getattr(run, "id", None) if run else None,
+            "dataset": getattr(getattr(run, "dataset", None), "name", "") if run else "",
+        },
+    }
+
+
+def build_dismissal_payload(ring, reason_label: str, officer: str, note: str = "") -> dict:
+    """
+    Recorded when an officer clears an alert as *not* fraud.
+
+    A dismissal is a decision about a real taxpayer just as much as a
+    confirmation is, and it is the record that shows an allegation was
+    examined and dropped. Putting it in the same chain means the audit trail
+    covers what the department decided not to pursue, not only what it did.
+    """
+    run = getattr(ring, "run", None)
+    return {
+        "record_type": "dismissed_alert",
+        "ring_id": ring.id,
+        "pattern_kind": getattr(ring, "kind", "ring"),
+        "dismissed_by": officer,
+        "dismissed_at": datetime.now(timezone.utc).isoformat(),
+        "reason_code": ring.dismissal_reason,
+        "reason": reason_label,
+        "note": note,
+        "risk_score": round(ring.risk_score, 2),
+        "company_ids": list(ring.company_ids or []),
+        "model": {
+            "version": getattr(run, "model_version", "") if run else "",
+            "risk_threshold": getattr(run, "risk_threshold", None) if run else None,
+            "detection_run_id": getattr(run, "id", None) if run else None,
+        },
+    }
+
+
+def build_report_payload(report, officer: str) -> dict:
+    """
+    Recorded when a case report is issued to a supervisor.
+
+    Only the hash of the report goes in, not its body: the block's job is to
+    let anyone prove later that a given document is the one that was issued,
+    and duplicating confidential contents into a second table would widen the
+    exposure for no additional guarantee.
+    """
+    run = report.run
+    return {
+        "record_type": "case_report_issued",
+        "report_id": report.id,
+        "title": report.title,
+        "issued_by": officer,
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "recipients": list(report.recipients or []),
+        "content_sha256": report.content_hash,
+        "confirmed_count": (report.summary or {}).get("confirmed_count"),
+        "confirmed_value": (report.summary or {}).get("confirmed_value"),
+        "dismissed_count": (report.summary or {}).get("dismissed_count"),
+        "model": {
+            "version": run.model_version,
+            "risk_threshold": run.risk_threshold,
+            "detection_run": run.name,
+            "detection_run_id": run.id,
+            "dataset": run.dataset.name,
+        },
     }

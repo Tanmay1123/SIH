@@ -153,3 +153,42 @@ MODEL_ARTIFACT_DIR = BASE_DIR / "fraud_engine" / "models_artifacts"
 # Longest circular-trade chain we look for. Real ITC rings are short; bounding
 # this keeps cycle enumeration cheap and predictable.
 MAX_RING_SIZE = 6
+
+# The score at or above which an alert counts as "high risk".
+#
+# This is a policy choice, not a constant: it trades officer time against
+# missed rings, and a department should be able to move it. It used to be the
+# literal 70 hardcoded in two different files. Every detection run records the
+# threshold in force when it ran, and so does every ledger block, so a past
+# decision can always be read back against the policy that produced it.
+RISK_THRESHOLD = float(os.getenv("RISK_THRESHOLD", "70"))
+
+# ---------------------------------------------------------------------------
+# Email - case reports to the supervisor
+# ---------------------------------------------------------------------------
+# With no EMAIL_HOST set, mail is printed to the backend console instead of
+# being sent. That keeps the whole report workflow demonstrable before any
+# credentials exist, and makes a missing configuration obvious rather than
+# silent.
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", True)
+EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", False)
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
+DEFAULT_FROM_EMAIL = os.getenv(
+    "DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@localhost"
+)
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.smtp.EmailBackend"
+    if EMAIL_HOST
+    else "django.core.mail.backends.console.EmailBackend",
+)
+
+# Who is copied on every case report, in addition to the officer who issued it.
+# Comma-separated. Anyone in the SUPERVISOR_GROUP_NAME group who has an email
+# address on their account is added to this automatically.
+REPORT_SUPERVISOR_EMAILS = os.getenv("REPORT_SUPERVISOR_EMAILS", "")
+SUPERVISOR_GROUP_NAME = os.getenv("SUPERVISOR_GROUP_NAME", "Supervisors")

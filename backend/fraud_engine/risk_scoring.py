@@ -33,7 +33,7 @@ import pandas as pd
 from django.conf import settings
 
 from fraud_engine.cycle_detection import detect_rings
-from fraud_engine.graph_builder import build_graph_from_dataframes, load_dataframes
+from fraud_engine.graph_builder import build_graph_from_dataframes
 
 MODEL_PATH = settings.MODEL_ARTIFACT_DIR / "risk_model.json"
 META_PATH = settings.MODEL_ARTIFACT_DIR / "feature_meta.json"
@@ -705,65 +705,8 @@ def ring_risk(ring: dict, company_scores: pd.DataFrame) -> tuple[float, list[dic
     return round(score, 2), explanation
 
 
-def run_scoring() -> dict:
-    """
-    Live scoring pass over the current database.
-
-    Reads companies/invoices, reuses the rings already stored by the
-    rebuild-graph step, writes a fresh RiskScore per company, and updates each
-    FlaggedRing's score and explanation. Synchronous on purpose - at demo scale
-    this takes a couple of seconds and a job queue would be pure ceremony.
-    """
-    from django.utils import timezone
-
-    from fraud_engine.models import FlaggedRing, RiskScore
-
-    companies, invoices = load_dataframes()
-    if companies.empty:
-        return {"companies_scored": 0, "rings_scored": 0,
-                "message": "No companies in the database. Upload a dataset first."}
-
-    stored_rings = list(FlaggedRing.objects.all())
-
-    # Recompute ring evidence from the live graph rather than trusting the
-    # summary stored at detection time: invoices may have changed since, and
-    # the feature pipeline needs hop-level amounts the stored row does not keep.
-    graph = build_graph_from_dataframes(companies, invoices)
-    rings = detect_rings(graph)
-
-    company_scores = score_network(companies, invoices, rings)
-
-    RiskScore.objects.all().delete()
-    RiskScore.objects.bulk_create(
-        [
-            RiskScore(
-                company_id=int(cid),
-                score=float(row["score"]),
-                feature_snapshot=row["features"],
-                explanation=row["explanation"],
-            )
-            for cid, row in company_scores.iterrows()
-        ],
-        batch_size=500,
-    )
-
-    by_signature = {
-        ",".join(str(c) for c in sorted(r["company_ids"])): r for r in rings
-    }
-    updated = 0
-    for ring_row in stored_rings:
-        evidence = by_signature.get(ring_row.signature)
-        if evidence is None:
-            continue
-        score, explanation = ring_risk(evidence, company_scores)
-        ring_row.risk_score = score
-        ring_row.explanation = explanation
-        ring_row.save(update_fields=["risk_score", "explanation"])
-        updated += 1
-
-    return {
-        "companies_scored": int(len(company_scores)),
-        "rings_scored": updated,
-        "model": load_metadata().get("metrics", {}),
-        "computed_at": timezone.now().isoformat(),
-    }
+# NOTE: the database-facing orchestration that used to live here (read the
+# tables, score, write rows back) now lives in fraud_engine/pipeline.py, which
+# wraps a whole detection pass in one named, dated DetectionRun. This module
+# stays what it should be: pure feature engineering, inference and explanation
+# over DataFrames, usable identically at training time and at scoring time.

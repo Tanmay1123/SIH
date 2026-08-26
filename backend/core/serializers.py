@@ -1,6 +1,47 @@
 from rest_framework import serializers
 
-from .models import Company, Invoice
+from .models import Company, Dataset, Invoice
+
+
+class DatasetSerializer(serializers.ModelSerializer):
+    uploaded_by_name = serializers.SerializerMethodField()
+    run_count = serializers.SerializerMethodField()
+    latest_run = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Dataset
+        fields = [
+            "id",
+            "name",
+            "note",
+            "uploaded_at",
+            "uploaded_by_name",
+            "companies_filename",
+            "invoices_filename",
+            "company_count",
+            "invoice_count",
+            "is_active",
+            "run_count",
+            "latest_run",
+        ]
+
+    def get_uploaded_by_name(self, obj):
+        return obj.uploaded_by.username if obj.uploaded_by_id else None
+
+    def get_run_count(self, obj):
+        return obj.runs.count()
+
+    def get_latest_run(self, obj):
+        run = obj.runs.first()  # DetectionRun.Meta orders newest first
+        if run is None:
+            return None
+        return {
+            "id": run.id,
+            "name": run.name,
+            "started_at": run.started_at,
+            "high_risk_count": run.high_risk_count,
+            "alert_count": run.alert_count,
+        }
 
 
 class CompanySerializer(serializers.ModelSerializer):
@@ -70,23 +111,30 @@ class CompanyDetailSerializer(CompanySerializer):
 
     def get_rings(self, obj):
         """
-        Which flagged rings this company belongs to.
+        Which flagged alerts this company appears in, most recent run first.
 
         Filtered in Python rather than with a JSONField `contains` lookup:
         that lookup is PostgreSQL-only and would break the SQLite path used
         for running tests without a database server. There are only tens of
-        rings, so the cost is irrelevant.
+        alerts per run, so the cost is irrelevant.
         """
         from fraud_engine.models import FlaggedRing
+
+        latest = self._latest_score(obj)
+        qs = FlaggedRing.objects.all()
+        if latest is not None and latest.run_id:
+            qs = qs.filter(run_id=latest.run_id)
 
         return [
             {
                 "id": ring.id,
+                "kind": ring.kind,
                 "risk_score": round(ring.risk_score, 2),
                 "ring_size": ring.ring_size,
+                "status": ring.status,
                 "officer_confirmed": ring.officer_confirmed,
             }
-            for ring in FlaggedRing.objects.all()
+            for ring in qs
             if obj.id in (ring.company_ids or [])
         ]
 

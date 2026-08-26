@@ -17,7 +17,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 
-from .models import Company, Invoice
+from .models import Company, Dataset, Invoice
 
 COMPANY_COLUMNS = [
     "gstin", "pan", "name", "director_name", "registered_address",
@@ -44,6 +44,8 @@ class CsvImportError(Exception):
 class ImportResult:
     companies_created: int
     invoices_created: int
+    dataset_id: int | None = None
+    dataset_name: str = ""
 
 
 def _read_rows(upload) -> list[dict]:
@@ -163,18 +165,19 @@ def parse_invoices(upload, known_gstins: set[str]) -> tuple[list[dict], list[str
 
 
 @transaction.atomic
-def load_dataset(companies_file, invoices_file) -> ImportResult:
+def load_dataset(
+    companies_file, invoices_file, name: str = "", user=None, note: str = ""
+) -> ImportResult:
     """
-    Replace the entire dataset with what's in the two uploaded files.
+    Load an uploaded CSV pair as a new Dataset and make it the active one.
 
-    Mirrors the old seed-data command's behaviour: a new dataset is a new
-    investigation universe, so detected rings, scores and the audit ledger are
-    cleared along with the companies and invoices. (Confirmed rings already
-    written to the ledger were, by design, permanent evidence of a decision
-    made about the *previous* dataset - once that dataset is gone the rings
-    referencing it can no longer be meaningfully re-examined, so they are
-    cleared too. This mirrors exactly how `seed_demo_data` behaved before it
-    was removed.)
+    This no longer wipes anything. Each upload is its own investigation
+    universe: previous datasets, the detection runs made against them, and the
+    audit ledger all survive. That is what lets an officer come back next week,
+    pick an earlier upload, and see exactly what was found in it.
+
+    The new dataset becomes active, so the dashboard, the graph and detection
+    all immediately point at it.
     """
     company_rows, company_errors = parse_companies(companies_file)
     if company_errors:
@@ -185,23 +188,29 @@ def load_dataset(companies_file, invoices_file) -> ImportResult:
     if invoice_errors:
         raise CsvImportError(invoice_errors)
 
-    # Local import: avoids a core -> fraud_engine import at module load time.
-    from fraud_engine.models import FlaggedRing, LedgerBlock, RiskScore
-
-    LedgerBlock.objects.all().delete()
-    FlaggedRing.objects.all().delete()
-    RiskScore.objects.all().delete()
-    Invoice.objects.all().delete()
-    Company.objects.all().delete()
+    dataset = Dataset.objects.create(
+        name=(name or "").strip() or _default_name(),
+        note=note or "",
+        uploaded_by=user if (user is not None and user.is_authenticated) else None,
+        companies_filename=getattr(companies_file, "name", "") or "",
+        invoices_filename=getattr(invoices_file, "name", "") or "",
+        company_count=len(company_rows),
+        invoice_count=len(invoice_rows),
+    )
 
     companies = Company.objects.bulk_create(
-        [Company(**row) for row in company_rows], batch_size=500
+        [Company(dataset=dataset, **row) for row in company_rows], batch_size=500
     )
-    pk_by_gstin = {c.gstin: c.pk for c in companies}
+    # bulk_create does not populate primary keys on every backend, so read them
+    # back rather than trusting the returned instances.
+    pk_by_gstin = dict(
+        Company.objects.filter(dataset=dataset).values_list("gstin", "pk")
+    )
 
     Invoice.objects.bulk_create(
         [
             Invoice(
+                dataset=dataset,
                 seller_id=pk_by_gstin[row["seller_gstin"]],
                 buyer_id=pk_by_gstin[row["buyer_gstin"]],
                 amount=row["amount"],
@@ -214,6 +223,18 @@ def load_dataset(companies_file, invoices_file) -> ImportResult:
         batch_size=1000,
     )
 
+    dataset.activate()
+
     return ImportResult(
-        companies_created=len(companies), invoices_created=len(invoice_rows)
+        companies_created=len(companies),
+        invoices_created=len(invoice_rows),
+        dataset_id=dataset.pk,
+        dataset_name=dataset.name,
     )
+
+
+def _default_name() -> str:
+    """A readable fallback name when the officer did not supply one."""
+    from django.utils import timezone
+
+    return f"Upload {timezone.localtime().strftime('%d %b %Y, %H:%M')}"

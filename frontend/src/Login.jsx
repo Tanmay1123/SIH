@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { login, setToken } from './api'
+import { Banner, Button, Field, Input, Mono, Spinner } from './components/ui.jsx'
+import { NetworkIcon, ShieldIcon } from './icons.jsx'
 
 /**
- * Gate in front of the whole console. Only an account created by an admin
- * (`python manage.py createsuperuser`, or added in /admin/) can get in - there
- * is no self-signup, on purpose: this is a tool for authorised government
- * officers, not a public product.
+ * Gate in front of the whole console.
+ *
+ * Only an account created by an administrator (`manage.py createsuperuser`, or
+ * added in /admin/) can get in - there is no self-signup, on purpose: this is a
+ * tool for authorised officers, not a public product.
  */
 export default function Login({ onAuthenticated }) {
   const [username, setUsername] = useState('')
@@ -20,72 +23,126 @@ export default function Login({ onAuthenticated }) {
     try {
       const data = await login(username, password)
       setToken(data.token)
-      onAuthenticated(data.username)
+      await onAuthenticated()
     } catch (err) {
       setError(
         err?.response?.status === 401
           ? 'Incorrect username or password.'
-          : err?.response?.data?.detail || 'Could not reach the API.',
+          : err?.response?.data?.detail || 'Could not reach the API. Is the backend running?',
       )
-    } finally {
       setSubmitting(false)
     }
   }
 
   return (
-    <div className="flex h-screen items-center justify-center bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-200">
-      <form
-        onSubmit={handleSubmit}
-        className="w-full max-w-sm rounded border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900"
-      >
-        <h1 className="text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-          GST Circular-Trade Fraud Detection
-        </h1>
-        <p className="mt-1 text-xs text-zinc-500">
-          Restricted access. Authorised government officers only.
-        </p>
+    <div className="flex min-h-screen bg-zinc-50 dark:bg-zinc-950">
+      {/* ---- the pitch, on wide screens ---- */}
+      <div className="relative hidden w-1/2 flex-col justify-between overflow-hidden bg-zinc-900 p-12 lg:flex dark:bg-zinc-900">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 opacity-[0.14]"
+          style={{
+            backgroundImage:
+              'radial-gradient(circle at 20% 30%, #479f6a 0, transparent 42%), radial-gradient(circle at 78% 68%, #dc2626 0, transparent 40%)',
+          }}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 opacity-[0.06]"
+          style={{
+            backgroundImage:
+              'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
+            backgroundSize: '44px 44px',
+          }}
+        />
 
-        <div className="mt-5 space-y-3">
-          <div>
-            <label className="mb-1 block text-[11px] font-medium tracking-wide text-zinc-500">
-              USERNAME
-            </label>
-            <input
-              autoFocus
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-green-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[11px] font-medium tracking-wide text-zinc-500">
-              PASSWORD
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-green-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-            />
-          </div>
+        <div className="relative flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">
+            <NetworkIcon className="h-4.5 w-4.5" />
+          </span>
+          <span className="text-sm font-semibold tracking-tight text-zinc-100">
+            Circular-Trade Fraud Detection
+          </span>
         </div>
 
-        {error && <p className="mt-3 text-xs text-red-600 dark:text-red-400">{error}</p>}
+        <div className="relative max-w-md">
+          <p className="text-2xl font-semibold leading-snug tracking-tight text-zinc-50">
+            Every invoice in a fraud ring looks perfect on its own.
+          </p>
+          <p className="mt-4 text-sm leading-relaxed text-zinc-400">
+            The fraud is only visible in the shape of the network — value that leaves a company
+            and comes back to it, or a shell that sells to everyone and buys from nobody. This
+            console finds those shapes, ranks them, explains them in plain English, and records
+            every decision an officer makes in a tamper-evident ledger.
+          </p>
+        </div>
 
-        <button
-          type="submit"
-          disabled={submitting || !username || !password}
-          className="mt-5 w-full rounded bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50"
-        >
-          {submitting ? 'Signing in…' : 'Sign in'}
-        </button>
-
-        <p className="mt-4 text-[10px] leading-relaxed text-zinc-500 dark:text-zinc-600">
-          No account? Officer accounts are created by an administrator via{' '}
-          <code className="text-zinc-600 dark:text-zinc-500">python manage.py createsuperuser</code>{' '}
-          or the Django admin at <code className="text-zinc-600 dark:text-zinc-500">/admin/</code>.
+        <p className="relative text-[11px] leading-relaxed text-zinc-500">
+          Smart India Hackathon 2026 · SIH26_95 · Nothing in this system blocks a refund
+          automatically. Every enforcement action remains a human decision.
         </p>
-      </form>
+      </div>
+
+      {/* ---- the form ---- */}
+      <div className="flex w-full items-center justify-center px-6 py-12 lg:w-1/2">
+        <form onSubmit={handleSubmit} className="w-full max-w-sm">
+          <div className="mb-8 lg:hidden">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white">
+              <NetworkIcon className="h-5 w-5" />
+            </span>
+          </div>
+
+          <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+            Sign in
+          </h1>
+          <p className="mt-1.5 flex items-center gap-1.5 text-xs text-zinc-500">
+            <ShieldIcon className="h-3.5 w-3.5" />
+            Restricted access — authorised officers only.
+          </p>
+
+          <div className="mt-7 space-y-4">
+            <Field label="Username">
+              <Input
+                autoFocus
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </Field>
+            <Field label="Password">
+              <Input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </Field>
+          </div>
+
+          {error && (
+            <Banner tone="danger" className="mt-4">
+              {error}
+            </Banner>
+          )}
+
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            className="mt-6 w-full"
+            disabled={submitting || !username || !password}
+          >
+            {submitting ? <Spinner /> : null}
+            {submitting ? 'Signing in…' : 'Sign in'}
+          </Button>
+
+          <p className="mt-6 text-[11px] leading-relaxed text-zinc-500">
+            No account? There is no self-signup. Officer accounts are created by an
+            administrator with <Mono>python manage.py createsuperuser</Mono> or in the Django
+            admin at <Mono>/admin/</Mono>.
+          </p>
+        </form>
+      </div>
     </div>
   )
 }

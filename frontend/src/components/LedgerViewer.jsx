@@ -12,6 +12,76 @@ import { getLedgerBlocks, verifyLedger } from '../api'
 
 const short = (hash) => (hash ? `${hash.slice(0, 16)}…${hash.slice(-8)}` : '—')
 
+const formatInr = (value) => {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  if (n >= 1e7) return `₹${(n / 1e7).toFixed(2)} Cr`
+  if (n >= 1e5) return `₹${(n / 1e5).toFixed(2)} L`
+  return `₹${n.toLocaleString('en-IN')}`
+}
+
+/**
+ * The chain now carries three kinds of decision, not one. Each gets its own
+ * one-line summary, because "Ring 425 · companies · risk 56" is what you get
+ * from rendering a dismissal with the confirmation template.
+ */
+const RECORD_TYPES = {
+  confirmed_fraud_ring: {
+    label: 'CONFIRMED FRAUD',
+    tone: 'border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300',
+  },
+  dismissed_alert: {
+    label: 'CLEARED',
+    tone: 'border-zinc-200 bg-zinc-100 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400',
+  },
+  case_report_issued: {
+    label: 'REPORT ISSUED',
+    tone: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300',
+  },
+}
+
+function BlockSummary({ payload }) {
+  const type = payload?.record_type
+  const cls = 'mt-1 text-[11px] text-zinc-600 dark:text-zinc-400'
+
+  if (type === 'dismissed_alert') {
+    return (
+      <div className={cls}>
+        {payload.pattern_kind === 'mill' ? 'Mill' : 'Ring'} {payload.ring_id} cleared as
+        not fraud — {payload.reason} · risk {payload.risk_score} · by{' '}
+        {payload.dismissed_by}
+        {payload.note && (
+          <span className="mt-0.5 block italic text-zinc-500">“{payload.note}”</span>
+        )}
+      </div>
+    )
+  }
+
+  if (type === 'case_report_issued') {
+    return (
+      <div className={cls}>
+        “{payload.title}” — {payload.confirmed_count ?? 0} confirmed,{' '}
+        {formatInr(payload.confirmed_value)} at risk · issued by {payload.issued_by} to{' '}
+        {(payload.recipients || []).length} recipient
+        {(payload.recipients || []).length === 1 ? '' : 's'}
+      </div>
+    )
+  }
+
+  return (
+    <div className={cls}>
+      {payload?.pattern_kind === 'mill' ? 'Mill' : 'Ring'} {payload?.ring_id} ·{' '}
+      {payload?.ring_size} companies · risk {payload?.risk_score} · confirmed by{' '}
+      {payload?.confirmed_by}
+      {payload?.closure === 'control' && (
+        <span className="ml-1 text-amber-600 dark:text-amber-400">
+          (closed by shared ownership)
+        </span>
+      )}
+    </div>
+  )
+}
+
 export default function LedgerViewer({ refreshKey }) {
   const [blocks, setBlocks] = useState([])
   const [chain, setChain] = useState(null)
@@ -68,8 +138,9 @@ export default function LedgerViewer({ refreshKey }) {
 
         {!loading && blocks.length === 0 && (
           <p className="px-4 py-6 text-sm text-zinc-500">
-            The ledger is empty. Confirm a ring as fraudulent and its evidence
-            will be recorded here permanently.
+            The ledger is empty. Every officer decision — confirming an alert as
+            fraud, clearing one as legitimate, or issuing a case report — is
+            recorded here permanently.
           </p>
         )}
 
@@ -82,11 +153,22 @@ export default function LedgerViewer({ refreshKey }) {
                   onClick={() => setExpanded(open ? null : block.index)}
                   className="w-full px-4 py-3 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800/40"
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-zinc-900 dark:text-zinc-200">
-                      Block #{block.index}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-zinc-900 dark:text-zinc-200">
+                        Block #{block.index}
+                      </span>
+                      {RECORD_TYPES[block.payload?.record_type] && (
+                        <span
+                          className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold ${
+                            RECORD_TYPES[block.payload.record_type].tone
+                          }`}
+                        >
+                          {RECORD_TYPES[block.payload.record_type].label}
+                        </span>
+                      )}
                     </span>
-                    <span className="text-[11px] text-zinc-500">
+                    <span className="shrink-0 text-[11px] text-zinc-500">
                       {new Date(block.timestamp).toLocaleString('en-IN')}
                     </span>
                   </div>
@@ -103,11 +185,16 @@ export default function LedgerViewer({ refreshKey }) {
                       )}
                     </div>
                   </div>
-                  <div className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
-                    Ring {block.payload?.ring_id} · {block.payload?.ring_size} companies ·
-                    risk {block.payload?.risk_score} · confirmed by{' '}
-                    {block.payload?.confirmed_by}
-                  </div>
+                  <BlockSummary payload={block.payload} />
+
+                  {block.payload?.model?.version && (
+                    <div className="mt-1 font-mono text-[10px] text-zinc-400 dark:text-zinc-600">
+                      model {block.payload.model.version} · threshold{' '}
+                      {block.payload.model.risk_threshold}
+                      {block.payload.model.detection_run &&
+                        ` · ${block.payload.model.detection_run}`}
+                    </div>
+                  )}
                 </button>
 
                 {open && (

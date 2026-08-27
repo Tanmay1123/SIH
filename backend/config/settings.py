@@ -64,6 +64,10 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Immediately after SecurityMiddleware, per WhiteNoise's documented order.
+    # Serves the admin's own CSS/JS in production, where there is no separate
+    # web server in front of Django to do it.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -103,6 +107,20 @@ if env_bool("USE_SQLITE", False):
             "NAME": BASE_DIR / "db.sqlite3",
         }
     }
+elif os.getenv("DATABASE_URL"):
+    # Managed hosts (Render, Railway, Fly, Neon, Supabase) hand out a single
+    # connection string rather than five separate variables. Taking it as-is
+    # means nothing has to be split apart by hand and re-pasted wrongly.
+    import dj_database_url
+
+    DATABASES = {
+        "default": dj_database_url.config(
+            conn_max_age=600,
+            # Managed Postgres requires TLS; local Postgres usually has no
+            # certificate at all, which is why this is not simply always on.
+            ssl_require=env_bool("DATABASE_SSL", True),
+        )
+    }
 else:
     DATABASES = {
         "default": {
@@ -129,6 +147,14 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# Compressed, permanently-cacheable filenames for whatever collectstatic
+# produced. WhiteNoise serves these directly from the app process.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    },
+}
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ---------------------------------------------------------------------------
@@ -154,10 +180,71 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
 }
 
-# The React dev server talks to Django cross-origin. Credentials are carried in
-# an Authorization header (token auth), not cookies, so this stays safe even
-# fully open for local development.
-CORS_ALLOW_ALL_ORIGINS = True
+# The React app talks to Django cross-origin - in development from the Vite dev
+# server, in production from wherever the frontend is hosted (Vercel).
+#
+# Wide open is fine locally: credentials travel in an Authorization header
+# (token auth), not cookies, so there is no ambient authority for another
+# origin to ride on. It is still the wrong default once this is on the public
+# internet, so setting CORS_ALLOWED_ORIGINS switches it to an explicit list.
+#
+#     CORS_ALLOWED_ORIGINS=https://your-app.vercel.app,https://your-domain.in
+#
+# Vercel also gives every branch and every commit its own preview URL, which no
+# fixed list can enumerate. CORS_ALLOW_VERCEL_PREVIEWS=True additionally
+# accepts any *.vercel.app origin, so preview deployments work without pinning
+# the production list open.
+_cors_origins = [
+    o.strip().rstrip("/")
+    for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+]
+
+if _cors_origins:
+    CORS_ALLOW_ALL_ORIGINS = False
+    CORS_ALLOWED_ORIGINS = _cors_origins
+    if env_bool("CORS_ALLOW_VERCEL_PREVIEWS", False):
+        CORS_ALLOWED_ORIGIN_REGEXES = [r"^https://.*\.vercel\.app$"]
+else:
+    CORS_ALLOW_ALL_ORIGINS = True
+
+# Django checks this for any request that goes through CSRF - the /admin/ login
+# most of all. Without the deployed host listed, admin sign-in fails behind a
+# proxy with a bare "CSRF verification failed" and no hint as to why.
+CSRF_TRUSTED_ORIGINS = [
+    o.strip().rstrip("/")
+    for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if o.strip()
+] or _cors_origins
+
+# Behind Render/Railway/Fly the app speaks HTTP to a proxy that terminated TLS.
+# Without this Django thinks every request is insecure and builds http:// URLs.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# ---------------------------------------------------------------------------
+# Production hardening
+# ---------------------------------------------------------------------------
+# Switched on by DEBUG=False rather than by a separate flag, so deploying with
+# debug off cannot accidentally leave cookies readable over plain HTTP. Every
+# one is still individually overridable, because a first deploy on a host
+# without a certificate yet needs the redirect off to be reachable at all.
+#
+# `manage.py check --deploy` reports these; all five of its warnings are
+# answered here (the SECRET_KEY one by supplying a real key in the
+# environment, which the deployment docs cover).
+if not DEBUG:
+    SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", True)
+    # A platform health check may probe over plain HTTP from inside the
+    # network. Redirecting it to HTTPS reads as "unhealthy" and the deploy
+    # never goes live, so the liveness probe at "/" is exempt.
+    SECURE_REDIRECT_EXEMPT = [r"^$"]
+    SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", True)
+    CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", True)
+    # Six months. Start lower if you are unsure: HSTS is cached by browsers
+    # and cannot be taken back quickly once they have seen it.
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "15768000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", True)
+    SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", False)
 
 # ---------------------------------------------------------------------------
 # Project-specific knobs

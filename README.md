@@ -26,7 +26,8 @@ recording officer-confirmed rings in a tamper-evident hash-chained ledger.
 10. [API reference](#10-api-reference)
 11. [Everyday commands](#11-everyday-commands)
 12. [Troubleshooting](#12-troubleshooting)
-13. [Notes for collaborators](#13-notes-for-collaborators)
+13. [Deploying it](#125-deploying-it) — Vercel + a container host
+14. [Notes for collaborators](#13-notes-for-collaborators)
 
 ---
 
@@ -1157,6 +1158,116 @@ been exercised end to end on this codebase. The Docker path is standard and its
 config is validated, but if you're the first person to run `docker-compose up`
 and something snags, it's more likely an environment issue than a code one —
 shout and we'll fix it in a commit.
+
+---
+
+## 12.5. Deploying it
+
+### The shape of a deployment, and why
+
+**The frontend goes on Vercel. The backend cannot.** That is a hard technical
+limit, not a preference:
+
+| | Vercel serverless | This backend |
+|---|---|---|
+| Bundle size | 250 MB unzipped, hard cap | **~634 MB installed** |
+| Request timeout | 10 s Hobby / 60 s Pro | detection is synchronous and can take tens of seconds |
+| Filesystem/process | ephemeral, per-invocation | long-lived worker, model loaded once |
+
+The size isn't trimmable fat — `llvmlite` (125 MB), `scipy` (99 MB), `pandas`
+(73 MB), `scikit-learn` (48 MB), `numpy` (36 MB) and `numba` (31 MB) are what
+the risk model and its SHAP explanations actually need. Dropping SHAP entirely
+still leaves ~295 MB, over the cap, and costs the explanations that make a
+score defensible in the first place.
+
+So:
+
+```
+  React frontend  ──►  Vercel          (static build + CDN — what Vercel is for)
+        │ VITE_API_BASE_URL
+        ▼
+  Django backend  ──►  Render / Railway / Fly.io   (Docker, already in this repo)
+        │
+        ▼
+  PostgreSQL      ──►  the same host's managed database
+```
+
+Deploy the **backend first** — the frontend needs its URL at build time.
+
+### 1. Backend
+
+Any host that runs a container works. `render.yaml` in the repo root is a ready
+blueprint (Render → *New* → *Blueprint* → point at this repo); Railway and
+Fly.io take the same `backend/Dockerfile` with their own config.
+
+The image runs **gunicorn**, not `runserver` — the development server is
+single-threaded and not built to face the internet. Static files are served by
+**WhiteNoise** from inside the app, so `/admin/` has its CSS with no separate
+web server.
+
+Environment variables:
+
+| Variable | Value | Why |
+|---|---|---|
+| `DATABASE_URL` | from your managed Postgres | Preferred over the five `POSTGRES_*` vars; hosts hand out one string |
+| `DJANGO_SECRET_KEY` | a long random value | Generate: `python -c "import secrets;print(secrets.token_urlsafe(64))"` |
+| `DJANGO_DEBUG` | `False` | Also switches on HTTPS redirect, secure cookies and HSTS |
+| `DJANGO_ALLOWED_HOSTS` | your API hostname | Django rejects every other Host header |
+| `CORS_ALLOWED_ORIGINS` | your Vercel URL | **Set this.** Left blank, CORS stays wide open |
+| `CORS_ALLOW_VERCEL_PREVIEWS` | `True` | Also accept `*.vercel.app`, so preview deploys work |
+| `EMAIL_HOST` etc. | your SMTP details | Omit and reports print to the log instead of sending |
+
+Then create the accounts once, from the host's shell:
+
+```bash
+python manage.py setup_accounts --supervisor 'supervisor:Name:email@dept.gov.in'
+```
+
+Check it: `curl https://your-api.onrender.com/` returns `{"status": "ok", ...}`.
+
+### 2. Frontend on Vercel
+
+Import the GitHub repo, then set:
+
+| Setting | Value |
+|---|---|
+| **Root Directory** | `frontend` |
+| Framework preset | Vite (auto-detected) |
+| Build command | `npm run build` (auto) |
+| Output directory | `dist` (auto) |
+
+Add one environment variable:
+
+```
+VITE_API_BASE_URL = https://your-api.onrender.com/api
+```
+
+Note the `/api` suffix and no trailing slash.
+
+> **The one thing that catches everybody:** Vite bakes `VITE_*` variables into
+> the bundle at **build** time. Setting the variable on an existing deployment
+> changes nothing until you **redeploy**. If the deployed app throws network
+> errors, open the browser console — the app prints an explicit message when it
+> detects it was built without this variable.
+
+`frontend/vercel.json` is already in the repo. Its `rewrites` rule is what makes
+refreshing on `/reports` work: this is a single-page app, there is no
+`/reports` file on disk, and without the rewrite Vercel returns its own 404.
+
+### 3. After the first deploy
+
+Set `CORS_ALLOWED_ORIGINS` on the backend to the Vercel URL you just got, and
+restart it. Until you do, the browser blocks every API call — a CORS failure
+shows up in the console as a blocked request, not as a server error.
+
+### Mobile
+
+The console is responsive from 320px up. Two things change on small screens:
+the navigation rail becomes a drawer behind the header's menu button, and the
+Network page's three panes (queue, graph, evidence) become three tabs, since
+they need ~1000px to sit side by side. Everything remains reachable — nothing
+is hidden from a phone except the header's dataset switcher, which is duplicated
+on the Detections page.
 
 ---
 

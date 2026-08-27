@@ -7,6 +7,16 @@ django-filter>=24.2
 # Database driver
 psycopg2-binary>=2.9,<3.0
 
+# Serving in production
+# `manage.py runserver` is a development server - single-threaded and
+# explicitly not built to face the internet. Gunicorn is what actually runs
+# the app once deployed; WhiteNoise lets it serve its own static files (the
+# /admin/ CSS, mainly) without standing up a separate web server or CDN.
+gunicorn>=22.0
+whitenoise>=6.6
+# Managed hosts hand you one DATABASE_URL rather than five separate variables.
+dj-database-url>=2.1
+
 # Config
 python-dotenv>=1.0
 # Also used directly in settings.py to fix a real SMTP TLS failure on macOS

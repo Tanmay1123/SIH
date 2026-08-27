@@ -97,9 +97,12 @@ export default function AlertsFeed({
     [rings, filter],
   )
 
+  // Collapsing is a desktop space-saving affordance. On small screens the feed
+  // is a whole tab of its own, so a 40px stub would just be a dead strip -
+  // `lg:` keeps the collapsed rail off phones entirely.
   if (collapsed) {
     return (
-      <aside className="flex w-10 shrink-0 flex-col items-center gap-3 border-r border-zinc-200 py-3 dark:border-zinc-800">
+      <aside className="hidden w-10 shrink-0 flex-col items-center gap-3 border-r border-zinc-200 py-3 lg:flex dark:border-zinc-800">
         <CollapseToggle onClick={onToggleCollapsed} />
         {counts.pending > 0 && (
           <span
@@ -114,10 +117,12 @@ export default function AlertsFeed({
   }
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-r border-zinc-200 dark:border-zinc-800">
+    <aside className="flex h-full w-full shrink-0 flex-col border-r border-zinc-200 lg:w-80 dark:border-zinc-800">
       <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
         <div className="flex items-center gap-2">
-          <CollapseToggle onClick={onToggleCollapsed} />
+          <span className="hidden lg:block">
+            <CollapseToggle onClick={onToggleCollapsed} />
+          </span>
           <div className="min-w-0">
             <h2 className="text-sm font-semibold tracking-wide text-zinc-900 dark:text-zinc-200">
               ALERTS

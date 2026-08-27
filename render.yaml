@@ -1,0 +1,65 @@
+# Render blueprint for the CodeNova backend.
+#
+# WHY THE BACKEND IS NOT ON VERCEL
+# --------------------------------
+# Vercel runs serverless functions with a hard 250 MB unzipped bundle limit.
+# This project's dependencies are ~634 MB installed, and that is not trimmable
+# fat: llvmlite (125 MB), scipy (99 MB), pandas (73 MB), scikit-learn (48 MB),
+# numpy (36 MB) and numba (31 MB) are all real requirements of the risk model
+# and its SHAP explanations. Dropping SHAP entirely still leaves ~295 MB.
+#
+# Detection is also synchronous and CPU-bound - a large network takes tens of
+# seconds - against a 10s (Hobby) / 60s (Pro) function ceiling.
+#
+# So the split is: the React frontend on Vercel (which is exactly what Vercel
+# is for), and this container wherever containers run. Render is one option;
+# Railway and Fly.io take the same Dockerfile with different config files.
+#
+# To use: Render dashboard -> New -> Blueprint -> point at this repo.
+
+databases:
+  - name: codenova-db
+    databaseName: fraud_db
+    user: fraud_user
+    plan: free
+
+services:
+  - type: web
+    name: codenova-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    # The liveness probe is at the root (see config/urls.py), not /api/.
+    healthCheckPath: /
+    # Migrations run at release, not in the Dockerfile: the image is built once
+    # and may run as several instances, but the schema must move exactly once.
+    preDeployCommand: python manage.py migrate --noinput
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: codenova-db
+          property: connectionString
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: "False"
+      # Render terminates TLS and forwards the original host.
+      - key: DJANGO_ALLOWED_HOSTS
+        value: ".onrender.com"
+      # Set these to your real Vercel URL after the frontend's first deploy.
+      # Without them CORS stays wide open, which is wrong on a public host.
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: CORS_ALLOW_VERCEL_PREVIEWS
+        value: "True"
+      # Report delivery. Left unset, reports print to the log instead of
+      # sending, which is a safe default for a first deploy.
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: DEFAULT_FROM_EMAIL
+        sync: false

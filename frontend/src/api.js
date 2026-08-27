@@ -1,7 +1,6 @@
 import axios from 'axios'
 
-// Falls back to localhost so `npm run dev` works without any env setup.
-const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
+import { API_BASE_URL } from './config'
 
 const TOKEN_KEY = 'codenova_auth_token'
 
@@ -10,7 +9,7 @@ export const setToken = (token) => localStorage.setItem(TOKEN_KEY, token)
 export const clearToken = () => localStorage.removeItem(TOKEN_KEY)
 
 const client = axios.create({
-  baseURL,
+  baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
   // Scoring runs synchronously and walks the whole network, so it can take a
   // few seconds. The default 0 (no timeout) is fine, but be explicit.

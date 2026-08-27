@@ -103,8 +103,12 @@ export default function DatasetPicker({ activeId, onChanged }) {
         <ChevronDownIcon className="h-3 w-3 shrink-0 text-zinc-500" />
       </button>
 
+      {/* The menu is anchored right, not left: the button sits in the header's
+          right-hand group, so a left-anchored 24rem menu would run off the
+          edge of a narrow window. It only ever renders at >=640px anyway -
+          the header hides the picker entirely below that. */}
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-96 rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="absolute right-0 top-full z-50 mt-1 w-96 rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
           <div className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
             <p className="text-[11px] font-semibold tracking-wider text-zinc-500">
               UPLOADED DATASETS

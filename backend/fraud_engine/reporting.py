@@ -43,18 +43,129 @@ from core.models import Company
 
 from .models import CaseReport, FlaggedRing
 
-# --- palette: ink and brass, an audit document, not a dashboard ------------
-INK = "#141a24"
-BODY = "#3b4653"
-MUTED = "#6e7988"
-RULE = "#dce1e7"
-WASH = "#f5f6f8"
-BRASS = "#8f6410"
-BRASS_WASH = "#f3ead7"
-DANGER = "#8c3a2e"
-GOOD = "#2f6b45"
+# --- palette ---------------------------------------------------------------
+# Near-monochrome on purpose. Colour in this document carries one meaning -
+# red is risk, green is cleared - and nothing else competes with it. The
+# previous version tinted headings and labels brass, which on a printed page
+# read as stray orange text rather than as structure.
+INK = "#16202b"      # headings
+BODY = "#39424e"     # running text
+MUTED = "#78828f"    # labels, captions, provenance
+RULE = "#d8dde3"     # hairlines
+RULE_DARK = "#16202b"  # the one heavy rule, under the masthead
+DANGER = "#9a2f22"   # risk
+GOOD = "#2c6b45"     # cleared
 
-FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif"
+# Used only by the email cover note below, which is still a real email and so
+# is still built the email way: inline styles on a table, on a tinted page.
+# The reports themselves are print documents and use the stylesheet instead.
+WASH = "#f4f6f8"
+
+# xhtml2pdf resolves the 14 standard PDF base fonts by name and silently falls
+# back for anything else. "Helvetica" is one of them, so it is what actually
+# renders - naming a web font stack here only produced a substitution.
+FONT = "Helvetica"
+
+# ---------------------------------------------------------------------------
+# The print stylesheet
+# ---------------------------------------------------------------------------
+# WHY A STYLESHEET AND NOT INLINE STYLES
+#     These two documents used to be built as inline-styled nested tables,
+#     because they were emailed as the message body and that is the only thing
+#     Outlook renders reliably. They are not emailed any more - the mail is a
+#     short cover note with the PDF attached - so their only consumer is
+#     xhtml2pdf, and inline email HTML is the wrong shape for it: `max-width`
+#     with `margin:0 auto` does not centre on a fixed-width page, and nested
+#     table padding leaks into three different left edges.
+#
+# WHAT xhtml2pdf WILL NOT DO, learned the hard way
+#     text-transform      ignored - so labels are uppercased in Python instead
+#     letter-spacing      ignored in em units, unreliable otherwise - not used
+#     border-radius       ignored
+#     display:inline-block  ignored, which is why the old badge collided with
+#                           the text beside it
+#     flex / grid         unsupported entirely; columns are <table> cells
+#
+# Everything below is confined to what it actually honours: @page and @frame,
+# class selectors, pt sizes, solid borders, padding, and table layout.
+_STYLESHEET = f"""
+@page {{
+  size: a4 portrait;
+  margin: 1.5cm 1.6cm 2.1cm 1.6cm;
+  @frame footer {{
+    -pdf-frame-content: page-footer;
+    bottom: 1.05cm; left: 1.6cm; right: 1.6cm; height: 0.8cm;
+  }}
+}}
+body {{ font-family: {FONT}; font-size: 9.5pt; color: {BODY}; line-height: 1.45; }}
+
+/* masthead ------------------------------------------------------------- */
+.eyebrow    {{ font-size: 7.5pt; font-weight: bold; color: {MUTED}; }}
+.doc-title  {{ font-size: 19pt; font-weight: bold; color: {INK}; padding-top: 5pt; }}
+.doc-meta   {{ font-size: 8.5pt; color: {MUTED}; padding-top: 4pt; }}
+/* The masthead rule lives on a one-cell table, not on a div wrapping the
+   whole block. xhtml2pdf draws a div's border-bottom once per block child
+   rather than once for the div, so the previous version ruled off under the
+   eyebrow, the title AND the meta line - three hairlines where one belongs.
+   Table cell borders it gets right. */
+.masthead   {{ border-bottom: 1.2pt solid {RULE_DARK}; padding-bottom: 9pt; }}
+
+/* sections ------------------------------------------------------------- */
+.lead       {{ font-size: 10pt; color: {BODY}; padding-top: 13pt; line-height: 1.55; }}
+.section    {{ font-size: 8pt; font-weight: bold; color: {INK};
+               padding: 16pt 0 5pt 0; border-bottom: 0.6pt solid {RULE}; }}
+
+/* the four headline numbers -------------------------------------------- */
+.stats      {{ padding-top: 11pt; }}
+.stat-label {{ font-size: 7.5pt; color: {MUTED}; padding-bottom: 2pt; }}
+.stat-value {{ font-size: 15pt; font-weight: bold; color: {INK}; }}
+.stat-risk  {{ font-size: 15pt; font-weight: bold; color: {DANGER}; }}
+.stat-good  {{ font-size: 15pt; font-weight: bold; color: {GOOD}; }}
+
+/* one confirmed case ---------------------------------------------------- */
+.case       {{ border-bottom: 0.6pt solid {RULE}; padding: 8pt 0; }}
+.case-title {{ font-size: 10pt; font-weight: bold; color: {INK}; }}
+.case-chain {{ font-size: 8.5pt; color: {BODY}; padding-top: 3pt; }}
+.case-why   {{ font-size: 9pt; color: {BODY}; padding-top: 4pt; line-height: 1.5; }}
+.case-note  {{ font-size: 8.5pt; color: {MUTED}; padding-top: 4pt; }}
+.case-score {{ font-size: 14pt; font-weight: bold; color: {DANGER}; }}
+.case-value {{ font-size: 9.5pt; font-weight: bold; color: {INK}; padding-top: 5pt; }}
+.case-cap   {{ font-size: 7pt; color: {MUTED}; padding-top: 1pt; }}
+.tag        {{ font-size: 7pt; color: {MUTED}; }}
+
+/* key/value rows -------------------------------------------------------- */
+.kv-key     {{ font-size: 9pt; color: {MUTED}; padding: 3.5pt 12pt 3.5pt 0; }}
+.kv-val     {{ font-size: 9pt; font-weight: bold; color: {INK}; padding: 3.5pt 0; }}
+
+/* explanation bullets ---------------------------------------------------- */
+.why        {{ font-size: 9pt; color: {BODY}; padding: 5pt 0;
+               border-bottom: 0.6pt solid {RULE}; line-height: 1.45; }}
+.why-up     {{ font-weight: bold; color: {DANGER}; }}
+.why-down   {{ font-weight: bold; color: {GOOD}; }}
+
+/* footer + provenance ---------------------------------------------------- */
+.prov       {{ font-size: 7.5pt; color: {MUTED}; line-height: 1.6;
+               padding-top: 9pt; border-top: 0.6pt solid {RULE}; }}
+.prov b     {{ color: {BODY}; }}
+.pagenum    {{ font-size: 7.5pt; color: {MUTED}; }}
+.mono       {{ font-family: Courier; font-size: 8pt; }}
+.right      {{ text-align: right; }}
+.empty      {{ font-size: 9pt; color: {MUTED}; padding: 8pt 0; }}
+"""
+
+
+def _document(body: str, footer_left: str) -> str:
+    """Wrap a report body in the page, the stylesheet, and a numbered footer."""
+    return f"""<html><head><meta charset="utf-8"><style>{_STYLESHEET}</style></head>
+<body>
+<div id="page-footer">
+  <table width="100%"><tr>
+    <td class="pagenum">{footer_left}</td>
+    <td class="pagenum right">Page <pdf:pagenumber> of <pdf:pagecount></td>
+  </tr></table>
+</div>
+{body}
+</body></html>"""
 
 
 def inr(value) -> str:
@@ -150,61 +261,59 @@ def build_summary(run) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _stat(label: str, value: str, colour: str = INK) -> str:
+def _stat(label: str, value: str, cls: str = "stat-value") -> str:
+    """One of the headline numbers. `cls` carries the meaning, not a hex code."""
     return (
-        f'<td style="padding:0 18px 0 0;vertical-align:top;">'
-        f'<div style="font:600 10px {FONT};letter-spacing:.11em;'
-        f'text-transform:uppercase;color:{MUTED};padding-bottom:4px;">{_esc(label)}</div>'
-        f'<div style="font:600 22px {FONT};color:{colour};line-height:1;">{_esc(value)}</div>'
+        f'<td width="25%" valign="top">'
+        f'<div class="stat-label">{_esc(label.upper())}</div>'
+        f'<div class="{cls}">{_esc(value)}</div>'
         f"</td>"
     )
 
 
 def _case_row(index: int, case: dict) -> str:
-    chain = " → ".join(_esc(n) for n in case["companies"])
-    if case["company_count"] > len(case["companies"]):
-        chain += f" … (+{case['company_count'] - len(case['companies'])})"
+    """
+    One confirmed case: what it is on the left, what it is worth on the right.
 
+    The whole row carries page-break-inside:avoid, so a case never splits
+    across two pages with its score stranded on the second.
+    """
+    chain = " &#8594; ".join(_esc(n) for n in case["companies"])
+    if case["company_count"] > len(case["companies"]):
+        chain += f" &#8230; (+{case['company_count'] - len(case['companies'])} more)"
+
+    # Was an inline-block badge, which xhtml2pdf does not lay out - it rendered
+    # jammed against the case number with no gap. A parenthetical reads the
+    # same and cannot collide with anything.
     closure_note = ""
     if case["closure"] == FlaggedRing.CLOSURE_CONTROL:
-        closure_note = (
-            f'<span style="display:inline-block;background:{BRASS_WASH};color:{BRASS};'
-            f'font:700 9px {FONT};letter-spacing:.08em;padding:2px 6px;margin-left:6px;'
-            f'border-radius:2px;">CLOSED BY SHARED OWNERSHIP</span>'
-        )
+        closure_note = '<span class="tag"> &#183; closed by shared ownership</span>'
 
     note = ""
     if case.get("note"):
-        note = (
-            f'<div style="font:italic 12px {FONT};color:{MUTED};padding-top:6px;">'
-            f"Officer's note: {_esc(case['note'])}</div>"
-        )
+        note = f'<div class="case-note">Officer\'s note: {_esc(case["note"])}</div>'
 
     return f"""
-    <tr>
-      <td style="padding:14px 0;border-bottom:1px solid {RULE};vertical-align:top;">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+    <table width="100%" repeat="0" style="page-break-inside: avoid;">
+      <tr><td class="case" valign="top">
+        <table width="100%">
           <tr>
-            <td style="vertical-align:top;">
-              <div style="font:600 14px {FONT};color:{INK};">
-                {index}. {_esc(case['kind'])} · Case #{case['id']}{closure_note}
-              </div>
-              <div style="font:400 12px {FONT};color:{BODY};padding-top:4px;">{chain}</div>
-              <div style="font:400 12.5px {FONT};color:{BODY};padding-top:7px;line-height:1.5;">
-                {_esc(case['reason'])}
-              </div>
+            <td valign="top">
+              <div class="case-title">{index}. {_esc(case['kind'])} &#183; Case #{case['id']}{closure_note}</div>
+              <div class="case-chain">{chain}</div>
+              <div class="case-why">{_esc(case['reason'])}</div>
               {note}
             </td>
-            <td width="120" style="vertical-align:top;text-align:right;padding-left:16px;">
-              <div style="font:700 19px {FONT};color:{DANGER};line-height:1;">{case['risk_score']}</div>
-              <div style="font:400 10px {FONT};color:{MUTED};padding-top:3px;">RISK SCORE</div>
-              <div style="font:600 13px {FONT};color:{INK};padding-top:9px;">{inr(case['value'])}</div>
-              <div style="font:400 10px {FONT};color:{MUTED};padding-top:2px;">AT RISK</div>
+            <td width="88" valign="top" class="right">
+              <div class="case-score">{case['risk_score']}</div>
+              <div class="case-cap">RISK SCORE</div>
+              <div class="case-value">{inr(case['value'])}</div>
+              <div class="case-cap">AT RISK</div>
             </td>
           </tr>
         </table>
-      </td>
-    </tr>"""
+      </td></tr>
+    </table>"""
 
 
 def render_report_html(run, summary: dict, officer: str, supervisors: list[str]) -> str:
@@ -213,20 +322,15 @@ def render_report_html(run, summary: dict, officer: str, supervisors: list[str])
 
     org = organisation_name()
     generated = timezone.localtime().strftime("%d %B %Y, %H:%M")
-    cases_html = (
-        "".join(_case_row(i, c) for i, c in enumerate(summary["cases"], start=1))
-        or f'<tr><td style="padding:18px 0;font:400 13px {FONT};color:{MUTED};">'
-           "No cases were confirmed as fraudulent in this run.</td></tr>"
-    )
+    cases_html = "".join(
+        _case_row(i, c) for i, c in enumerate(summary["cases"], start=1)
+    ) or '<div class="empty">No cases were confirmed as fraudulent in this run.</div>'
 
     dismissal_rows = "".join(
-        f'<tr><td style="font:400 12px {FONT};color:{BODY};padding:3px 14px 3px 0;">{_esc(label)}</td>'
-        f'<td style="font:600 12px {FONT};color:{INK};padding:3px 0;">{count}</td></tr>'
+        f'<tr><td class="kv-key" width="72%">{_esc(label)}</td>'
+        f'<td class="kv-val">{count}</td></tr>'
         for label, count in summary["dismissal_breakdown"].items()
-    ) or (
-        f'<tr><td style="font:400 12px {FONT};color:{MUTED};padding:3px 0;">'
-        "Nothing was dismissed in this run.</td></tr>"
-    )
+    ) or '<tr><td class="empty">Nothing was cleared in this run.</td></tr>'
 
     lead = (
         f"Of {summary['alerts_total']} alert(s) raised in this run, the reviewing officer "
@@ -238,82 +342,50 @@ def render_report_html(run, summary: dict, officer: str, supervisors: list[str])
     if summary["pending_count"]:
         lead += f" {summary['pending_count']} alert(s) remain unreviewed."
 
-    return f"""<div style="margin:0;padding:24px;background:{WASH};">
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:700px;margin:0 auto;background:#ffffff;border:1px solid {RULE};">
-  <tr>
-    <td style="padding:26px 30px 20px;border-bottom:2px solid {INK};">
-      <div style="font:700 10px {FONT};letter-spacing:.16em;text-transform:uppercase;color:{BRASS};padding-bottom:10px;">
-        {_esc(org)} · Case Report
-      </div>
-      <div style="font:600 25px {FONT};color:{INK};line-height:1.15;">{_esc(run.name)}</div>
-      <div style="font:400 12.5px {FONT};color:{MUTED};padding-top:7px;">
-        Dataset: {_esc(summary['dataset_name'])} &nbsp;·&nbsp; Issued {generated} &nbsp;·&nbsp; Officer: {_esc(officer)}
-      </div>
-    </td>
-  </tr>
+    started = run.started_at.strftime("%d %b %Y %H:%M") if run.started_at else "&#8212;"
 
-  <tr>
-    <td style="padding:20px 30px 0;">
-      <div style="font:400 14px {FONT};color:{BODY};line-height:1.62;">{lead}</div>
-    </td>
-  </tr>
+    body = f"""
+<table width="100%"><tr><td class="masthead">
+  <div class="eyebrow">{_esc(org.upper())} &#183; CASE REPORT</div>
+  <div class="doc-title">{_esc(run.name)}</div>
+  <div class="doc-meta">
+    Dataset: {_esc(summary['dataset_name'])} &#183;
+    Issued {generated} &#183; Officer: {_esc(officer)}
+  </div>
+</td></tr></table>
 
-  <tr>
-    <td style="padding:20px 30px;">
-      <table role="presentation" cellpadding="0" cellspacing="0">
-        <tr>
-          {_stat("Confirmed", str(summary["confirmed_count"]), DANGER)}
-          {_stat("Value at risk", inr(summary["confirmed_value"]), INK)}
-          {_stat("Companies", str(summary["companies_implicated"]), INK)}
-          {_stat("Cleared", str(summary["dismissed_count"]), GOOD)}
-        </tr>
-      </table>
-    </td>
-  </tr>
+<div class="lead">{lead}</div>
 
-  <tr>
-    <td style="padding:0 30px;">
-      <div style="font:700 10px {FONT};letter-spacing:.14em;text-transform:uppercase;color:{BRASS};
-                  padding:8px 0 2px;border-top:1px solid {RULE};">
-        Confirmed cases, highest risk first
-      </div>
-      <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-        {cases_html}
-      </table>
-    </td>
-  </tr>
+<table width="100%" class="stats"><tr>
+  {_stat("Confirmed", str(summary["confirmed_count"]), "stat-risk")}
+  {_stat("Value at risk", inr(summary["confirmed_value"]))}
+  {_stat("Companies", str(summary["companies_implicated"]))}
+  {_stat("Cleared", str(summary["dismissed_count"]), "stat-good")}
+</tr></table>
 
-  <tr>
-    <td style="padding:20px 30px 0;">
-      <div style="font:700 10px {FONT};letter-spacing:.14em;text-transform:uppercase;color:{BRASS};padding-bottom:8px;">
-        Alerts examined and cleared
-      </div>
-      <table role="presentation" cellpadding="0" cellspacing="0">{dismissal_rows}</table>
-      <div style="font:400 11.5px {FONT};color:{MUTED};padding-top:8px;line-height:1.55;">
-        Cleared alerts are retained as training data. They are how the detector learns
-        what ordinary trade looks like, and they are the only record of where it was wrong.
-      </div>
-    </td>
-  </tr>
+<div class="section">CONFIRMED CASES &#183; HIGHEST RISK FIRST</div>
+{cases_html}
 
-  <tr>
-    <td style="padding:22px 30px 26px;">
-      <div style="border-top:1px solid {RULE};padding-top:14px;font:400 11px {FONT};color:{MUTED};line-height:1.7;">
-        <strong style="color:{BODY};">Provenance.</strong>
-        Model version <span style="font-family:monospace;">{_esc(summary['model_version'] or 'n/a')}</span> ·
-        high-risk threshold {summary['risk_threshold']:.0f} ·
-        run started {_esc(run.started_at.strftime('%d %b %Y %H:%M') if run.started_at else '—')}.<br>
-        Every confirmed case above is recorded in the tamper-evident audit ledger. This report's
-        own content hash is written to that ledger, so the document a supervisor approved can
-        later be proven to be the document on file.<br>
-        <strong style="color:{BODY};">Recipients.</strong> {_esc(', '.join(supervisors) or 'none configured')}<br>
-        <em>Machine-assisted analysis. Every case above was reviewed and confirmed by a named
-        officer; nothing in this system blocks a refund automatically.</em>
-      </div>
-    </td>
-  </tr>
-</table>
+<div class="section">ALERTS EXAMINED AND CLEARED</div>
+<table width="100%">{dismissal_rows}</table>
+<div class="case-note">
+  Cleared alerts are retained as training data. They are how the detector learns what
+  ordinary trade looks like, and the only record of where it was wrong.
+</div>
+
+<div class="prov">
+  <b>Provenance.</b>
+  Model version <span class="mono">{_esc(summary['model_version'] or 'n/a')}</span> &#183;
+  high-risk threshold {summary['risk_threshold']:.0f} &#183; run started {started}.<br/>
+  Every confirmed case above is recorded in the tamper-evident audit ledger. This report's
+  own content hash is written to that ledger, so the document a supervisor approved can
+  later be proven to be the document on file.<br/>
+  <b>Recipients.</b> {_esc(', '.join(supervisors) or 'none configured')}<br/>
+  <i>Machine-assisted analysis. Every case above was reviewed and confirmed by a named
+  officer; nothing in this system blocks a refund automatically.</i>
 </div>"""
+
+    return _document(body, f"{_esc(org)} &#183; {_esc(run.name)}")
 
 
 def content_hash(html: str, summary: dict) -> str:
@@ -439,7 +511,14 @@ def build_company_summary(company: Company) -> dict:
         "purchase_count": purchases.count(),
         "purchase_value": str(purchase_value),
         "risk_score": round(latest_score.score, 2) if latest_score else None,
-        "risk_computed_at": latest_score.computed_at.isoformat() if latest_score else None,
+        # Formatted here, not isoformat(): this string is printed straight into
+        # the report's provenance line, and a raw ISO stamp with microseconds
+        # and a UTC offset read as debug output next to "Issued 27 August 2026".
+        "risk_computed_at": (
+            timezone.localtime(latest_score.computed_at).strftime("%d %B %Y, %H:%M")
+            if latest_score
+            else None
+        ),
         "model_version": latest_score.run.model_version if latest_score and latest_score.run_id else None,
         "risk_threshold": latest_score.run.risk_threshold if latest_score and latest_score.run_id else None,
         "explanation": (latest_score.explanation if latest_score else []),
@@ -463,61 +542,50 @@ def build_company_summary(company: Company) -> dict:
 
 def _company_stat_row(label: str, value: str) -> str:
     return (
-        f'<tr><td style="font:400 12px {FONT};color:{MUTED};padding:3px 14px 3px 0;'
-        f'vertical-align:top;">{_esc(label)}</td>'
-        f'<td style="font:600 12.5px {FONT};color:{INK};padding:3px 0;">{_esc(value)}</td></tr>'
+        f'<tr><td class="kv-key" width="34%" valign="top">{_esc(label)}</td>'
+        f'<td class="kv-val">{_esc(value)}</td></tr>'
     )
 
 
 def _company_explanation_html(explanation: list[dict]) -> str:
     if not explanation:
         return (
-            f'<div style="font:400 12.5px {FONT};color:{MUTED};padding:6px 0;">'
-            "This company was not a candidate in any circular-trade loop, so it was "
-            "never scored - there is no model explanation to show.</div>"
+            '<div class="empty">This company was not a candidate in any circular-trade '
+            "loop, so it was never scored &#8212; there is no model explanation to show.</div>"
         )
     rows = []
     for reason in explanation:
         raises = reason.get("direction") == "increases_risk"
-        colour = DANGER if raises else GOOD
+        cls = "why-up" if raises else "why-down"
         marker = "&#9650;" if raises else "&#9660;"  # ▲ / ▼, as ASCII-safe entities
         rows.append(
-            f'<div style="padding:6px 0;border-bottom:1px solid {RULE};">'
-            f'<span style="font:700 11px {FONT};color:{colour};">{marker}</span> '
-            f'<span style="font:400 12.5px {FONT};color:{BODY};">{_esc(reason.get("text", ""))}</span>'
-            f"</div>"
+            f'<div class="why"><span class="{cls}">{marker}</span> '
+            f'{_esc(reason.get("text", ""))}</div>'
         )
     return "".join(rows)
 
 
 def _company_alert_row(alert: dict) -> str:
-    status_colour = {
-        "confirmed": DANGER,
-        "dismissed": GOOD,
-        "pending": MUTED,
-    }.get(alert["status"], MUTED)
+    cls = {"confirmed": "why-up", "dismissed": "why-down"}.get(alert["status"], "")
     closure_note = (
-        " (closed by shared ownership)" if alert["closure"] == FlaggedRing.CLOSURE_CONTROL else ""
+        " (closed by shared ownership)"
+        if alert["closure"] == FlaggedRing.CLOSURE_CONTROL
+        else ""
     )
     note = (
-        f'<div style="font:italic 11.5px {FONT};color:{MUTED};padding-top:3px;">'
-        f"{_esc(alert['dismissal_reason'] or alert['review_note'])}</div>"
+        f'<div class="case-note">{_esc(alert["dismissal_reason"] or alert["review_note"])}</div>'
         if (alert["dismissal_reason"] or alert["review_note"])
         else ""
     )
     return f"""
-    <tr>
-      <td style="padding:9px 0;border-bottom:1px solid {RULE};">
-        <div style="font:600 12.5px {FONT};color:{INK};">
-          {_esc(alert['kind'])} #{alert['id']}{closure_note} &nbsp;·&nbsp;
-          <span style="color:{status_colour};">{_esc(alert['status_label'])}</span>
-        </div>
-        <div style="font:400 11.5px {FONT};color:{MUTED};padding-top:2px;">
-          {alert['ring_size']} companies · risk {alert['risk_score']}
-        </div>
-        {note}
-      </td>
-    </tr>"""
+    <tr><td class="case" valign="top">
+      <div class="case-title">
+        {_esc(alert['kind'])} #{alert['id']}{closure_note} &#183;
+        <span class="{cls}">{_esc(alert['status_label'])}</span>
+      </div>
+      <div class="case-chain">{alert['ring_size']} companies &#183; risk {alert['risk_score']}</div>
+      {note}
+    </td></tr>"""
 
 
 def render_company_report_html(summary: dict, officer: str) -> str:
@@ -536,109 +604,66 @@ def render_company_report_html(summary: dict, officer: str) -> str:
 
     score = summary["risk_score"]
     score_html = (
-        f'<span style="font:700 30px {FONT};color:{DANGER};">{score}</span>'
+        f'<div class="case-score" style="font-size:22pt;">{score}</div>'
+        f'<div class="case-cap">RISK SCORE</div>'
         if score is not None
-        else f'<span style="font:600 16px {FONT};color:{MUTED};">Not scored</span>'
+        else '<div class="stat-label">NOT SCORED</div>'
     )
 
-    alerts_html = (
-        "".join(_company_alert_row(a) for a in summary["alerts"])
-        or f'<tr><td style="font:400 12.5px {FONT};color:{MUTED};padding:10px 0;">'
-           "This company does not appear in any flagged ring or mill.</td></tr>"
-    )
+    alerts_html = "".join(
+        _company_alert_row(a) for a in summary["alerts"]
+    ) or '<tr><td class="empty">This company does not appear in any flagged ring or mill.</td></tr>'
 
     provenance = ""
     if summary.get("model_version"):
         provenance = (
-            f'Model version <span style="font-family:monospace;">{_esc(summary["model_version"])}</span> '
-            f'&nbsp;·&nbsp; high-risk threshold {summary["risk_threshold"]:.0f} &nbsp;·&nbsp; '
+            f'Model version <span class="mono">{_esc(summary["model_version"])}</span> '
+            f'&#183; high-risk threshold {summary["risk_threshold"]:.0f} &#183; '
         )
 
-    return f"""<div style="margin:0;padding:24px;background:{WASH};">
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:700px;margin:0 auto;background:#ffffff;border:1px solid {RULE};">
-  <tr>
-    <td style="padding:26px 30px 20px;border-bottom:2px solid {INK};">
-      <div style="font:700 10px {FONT};letter-spacing:.16em;text-transform:uppercase;color:{BRASS};padding-bottom:10px;">
-        {_esc(org)} · Company Report
-      </div>
-      <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-        <tr>
-          <td style="vertical-align:top;">
-            <div style="font:600 23px {FONT};color:{INK};line-height:1.2;">{_esc(summary['name'])}</div>
-            <div style="font:400 12px {FONT};color:{MUTED};font-family:monospace;padding-top:4px;">
-              {_esc(summary['gstin'])}
-            </div>
-          </td>
-          <td width="110" style="vertical-align:top;text-align:right;">
-            {score_html}
-            <div style="font:400 10px {FONT};color:{MUTED};padding-top:2px;">RISK SCORE</div>
-          </td>
-        </tr>
-      </table>
-      <div style="font:400 12px {FONT};color:{MUTED};padding-top:9px;">
-        Issued {generated} &nbsp;·&nbsp; Requested by {_esc(officer)}
-      </div>
+    body = f"""
+<table width="100%"><tr><td class="masthead">
+  <div class="eyebrow">{_esc(org.upper())} &#183; COMPANY REPORT</div>
+  <table width="100%"><tr>
+    <td valign="top">
+      <div class="doc-title">{_esc(summary['name'])}</div>
+      <div class="doc-meta mono">{_esc(summary['gstin'])}</div>
     </td>
-  </tr>
+    <td width="92" valign="top" class="right">{score_html}</td>
+  </tr></table>
+  <div class="doc-meta">Issued {generated} &#183; Requested by {_esc(officer)}</div>
+</td></tr></table>
 
-  <tr>
-    <td style="padding:20px 30px 0;">
-      <div style="font:700 10px {FONT};letter-spacing:.14em;text-transform:uppercase;color:{BRASS};padding-bottom:8px;">
-        Registration
-      </div>
-      <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-        {_company_stat_row("PAN", summary['pan'])}
-        {_company_stat_row("Director", summary['director_name'])}
-        {_company_stat_row("Registered address", summary['registered_address'])}
-        {_company_stat_row("Registered on", summary['registered_date'])}
-        {_company_stat_row("Declared annual turnover", inr(summary['declared_turnover']))}
-      </table>
-    </td>
-  </tr>
-
-  <tr>
-    <td style="padding:18px 30px 0;">
-      <table role="presentation" cellpadding="0" cellspacing="0">
-        {_stat("Sales invoices", str(summary['sales_count']), INK)}
-        {_stat("Sold", inr(summary['sales_value']), INK)}
-        {_stat("Purchase invoices", str(summary['purchase_count']), INK)}
-        {_stat("Bought", inr(summary['purchase_value']), INK)}
-      </table>
-    </td>
-  </tr>
-
-  <tr>
-    <td style="padding:20px 30px 0;">
-      <div style="font:700 10px {FONT};letter-spacing:.14em;text-transform:uppercase;color:{BRASS};padding-bottom:2px;">
-        Why this score
-      </div>
-      {_company_explanation_html(summary['explanation'])}
-    </td>
-  </tr>
-
-  <tr>
-    <td style="padding:20px 30px 0;">
-      <div style="font:700 10px {FONT};letter-spacing:.14em;text-transform:uppercase;color:{BRASS};padding-bottom:2px;">
-        Appears in
-      </div>
-      <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-        {alerts_html}
-      </table>
-    </td>
-  </tr>
-
-  <tr>
-    <td style="padding:22px 30px 26px;">
-      <div style="border-top:1px solid {RULE};padding-top:14px;font:400 11px {FONT};color:{MUTED};line-height:1.7;">
-        <strong style="color:{BODY};">Provenance.</strong>
-        {provenance}risk computed {_esc(summary['risk_computed_at'] or 'not yet computed')}.<br>
-        <em>Machine-assisted analysis. This document explains a risk score; it is not itself
-        a finding of fraud, and confirms nothing that a named officer has not confirmed.</em>
-      </div>
-    </td>
-  </tr>
+<div class="section">REGISTRATION</div>
+<table width="100%">
+  {_company_stat_row("PAN", summary['pan'])}
+  {_company_stat_row("Director", summary['director_name'])}
+  {_company_stat_row("Registered address", summary['registered_address'])}
+  {_company_stat_row("Registered on", summary['registered_date'])}
+  {_company_stat_row("Declared annual turnover", inr(summary['declared_turnover']))}
 </table>
+
+<table width="100%" class="stats"><tr>
+  {_stat("Sales invoices", str(summary['sales_count']))}
+  {_stat("Sold", inr(summary['sales_value']))}
+  {_stat("Purchase invoices", str(summary['purchase_count']))}
+  {_stat("Bought", inr(summary['purchase_value']))}
+</tr></table>
+
+<div class="section">WHY THIS SCORE</div>
+{_company_explanation_html(summary['explanation'])}
+
+<div class="section">APPEARS IN</div>
+<table width="100%">{alerts_html}</table>
+
+<div class="prov">
+  <b>Provenance.</b>
+  {provenance}risk computed {_esc(summary['risk_computed_at'] or 'not yet computed')}.<br/>
+  <i>Machine-assisted analysis. This document explains a risk score; it is not itself
+  a finding of fraud, and confirms nothing that a named officer has not confirmed.</i>
 </div>"""
+
+    return _document(body, f"{_esc(org)} &#183; {_esc(summary['name'])}")
 
 
 def plain_text_company_version(summary: dict, officer: str) -> str:
@@ -709,7 +734,7 @@ def render_cover_email_html(report: CaseReport, officer: str) -> str:
 <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid {RULE};">
   <tr>
     <td style="padding:24px 28px 18px;border-bottom:2px solid {INK};">
-      <div style="font:700 10px {FONT};letter-spacing:.16em;text-transform:uppercase;color:{BRASS};padding-bottom:8px;">
+      <div style="font:700 10px {FONT};letter-spacing:.16em;text-transform:uppercase;color:{MUTED};padding-bottom:8px;">
         {_esc(org)}
       </div>
       <div style="font:600 18px {FONT};color:{INK};">{_esc(report.title)}</div>

@@ -482,21 +482,34 @@ retried, rather than erroring and losing the work.
 | **Clear** a case as honest | ✅ | ✅ |
 | Run detection, upload data | ✅ | ✅ |
 | Generate a report | ✅ | ✅ |
-| **Confirm** a case as fraud | ❌ | ✅ |
+| **Confirm** a case as fraud | ✅ | ✅ |
 | See what every officer is doing | ❌ | ✅ |
 | Change settings | ❌ | ✅ |
 
 The interesting question is **why the line sits exactly there**.
-**Confirming needs a supervisor** because it starts recovery proceedings against
-a real business — someone's livelihood — which deserves a second, more senior
-pair of eyes. **Clearing doesn't**, deliberately: "I looked, this is a normal
-business" is the most valuable thing the detector can learn, and behind an
-approval step it would simply never happen. The safe action is easy; the serious
-one is guarded.
 
-This is enforced on the **server**, not just hidden in the app. An officer who
-sends the confirm request by hand still gets refused. Hiding a button is a
-courtesy; refusing the request is security.
+Officers do the casework in both directions — they read the evidence, and they
+both confirm and clear. Confirming used to need a supervisor, on the argument
+that starting recovery proceedings against someone's livelihood deserves a
+second pair of eyes. In practice that made the supervisor a *queue* rather than
+a check: they had to re-enter every case behind the officer who had already
+worked it, and nothing moved until they did.
+
+So the accountability moved from *before* the decision to *after* it, without
+getting weaker. **Every decision is stamped with the name of the officer who
+made it**, that name goes into the unerasable notebook along with which model
+version and threshold they acted on, and supervisors can see every decision
+every officer has made. The check is still there — it just isn't in the way.
+
+What a supervisor still has to themselves is **oversight and policy**: seeing
+the whole team's activity, and changing the thresholds everyone else works to.
+
+Also worth knowing: **nobody's work is private**. Alerts, detection runs and
+reports aren't filtered per person — any officer or supervisor sees all of them,
+whoever made them. Only the team activity page is restricted.
+
+All of this is enforced on the **server**, not just hidden in the app. Hiding a
+button is a courtesy; refusing the request is security.
 
 Two small guards: a superuser is always a supervisor (so the first account can't
 lock itself out), and a supervisor can't demote themselves.

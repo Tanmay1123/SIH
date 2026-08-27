@@ -12,14 +12,18 @@ from .roles import is_supervisor
 
 class IsSupervisor(BasePermission):
     """
-    Supervisor-only. Used on the actions that carry real consequence:
-    confirming an alert as fraudulent, viewing every officer's activity, and
-    changing application settings.
+    Supervisor-only: oversight and policy.
+
+    Casework is not gated - officers confirm and clear alerts themselves, and
+    every decision is attributed to them in the ledger. What a supervisor keeps
+    is the ability to see the whole team's activity and to change the settings
+    everyone else works to.
     """
 
     message = (
-        "Only a supervisor can do this. Officers prepare and clear cases; "
-        "confirming one as fraudulent is a supervisor's decision."
+        "Only a supervisor can do this. Officers handle casework; seeing the "
+        "whole team's activity and changing detection settings are a "
+        "supervisor's."
     )
 
     def has_permission(self, request, view):

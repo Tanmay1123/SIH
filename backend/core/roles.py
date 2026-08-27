@@ -80,7 +80,18 @@ def permissions_for(user) -> dict:
         "can_run_detection": True,
         "can_upload": True,
         "can_issue_report": True,
-        "can_confirm": supervisor,
+        # Confirming used to be supervisor-only, on the argument that it starts
+        # recovery proceedings and so wants a second pair of eyes. It is an
+        # officer's call now: the officer is the one who read the evidence, and
+        # routing every confirmation through a supervisor made them the
+        # bottleneck on the queue rather than a check on it.
+        #
+        # What still holds the accountability: every confirmation names the
+        # authenticated officer who made it, and that name goes into the
+        # tamper-evident ledger with the model version and threshold they acted
+        # on. Supervisors see every officer's decisions on the Team page. The
+        # review is after the fact and on the record, rather than in the way.
+        "can_confirm": True,
         "can_view_team": supervisor,
         "can_edit_settings": supervisor,
         "can_manage_datasets": True,

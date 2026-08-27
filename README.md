@@ -37,10 +37,11 @@ recording officer-confirmed rings in a tamper-evident hash-chained ledger.
 > than through an invoice); officers can **dismiss** an alert as well as confirm
 > it, so the system finally has a record of where it was wrong; every upload is
 > kept as its own **dataset** and every detection is a named, dated **run**;
-> a one-page **case report** goes to the officer and their supervisor by
-> email, hashed into the audit ledger; and there are now two **roles** —
-> officers prepare and clear cases, supervisors sanction them. The console is a
-> multi-page application with its own navigation. See §7.1–§7.4.
+> a **PDF case report** — per run or per company — is viewable in the app,
+> downloadable, and emailed to a supervisor on an explicit confirmation, hashed
+> into the audit ledger; and there are two **roles** — officers do the casework
+> and decide their own cases, supervisors oversee the team and set policy. The
+> console is a multi-page application with its own navigation. See §7.1–§7.4.
 
 ### The problem
 
@@ -698,16 +699,29 @@ Two roles, mirroring how enforcement actually works.
 | **Clear** an alert as not fraud | ✓ | ✓ |
 | Upload data, run detection | ✓ | ✓ |
 | Issue case reports | ✓ | ✓ |
-| **Confirm** an alert as fraudulent | — | ✓ |
+| **Confirm** an alert as fraudulent | ✓ | ✓ |
 | See every officer's activity | — | ✓ |
 | Change detection settings | — | ✓ |
 
-**Why the split falls there.** Confirming an alert is the act that starts
-recovery proceedings against a real business, so it is the one decision that
-warrants a second, more senior pair of eyes. Clearing deliberately stays with
-the officer: being able to say *"I looked, this is a normal business"* is the
-feedback the detector needs, and gating it behind a supervisor would mean it
-never happens.
+**Why the split falls there.** Officers do the casework, both directions:
+they read the evidence, and they are the ones who confirm or clear. Confirming
+was supervisor-only in earlier versions, on the argument that starting recovery
+proceedings wants a second pair of eyes — but that made the supervisor a
+bottleneck on the queue rather than a check on it, since they had to re-enter
+each case behind the officer who had already worked it.
+
+The accountability did not move, it stopped blocking. **Every decision records
+the authenticated officer who made it**, that name goes into the tamper-evident
+ledger with the model version and threshold they acted on, and supervisors see
+every officer's decisions on the Team page. The review is after the fact and on
+the record.
+
+What stays supervisor-only is oversight and policy: seeing the whole team's
+activity, and changing the thresholds everyone else works to.
+
+**Everyone sees everyone's work.** Alerts, detection runs and issued reports are
+not scoped per user — any officer or supervisor sees all of them, whoever
+produced them. Only the Team page (per-officer activity) is gated.
 
 **How membership works.** Roles are Django Groups (`Officers`, `Supervisors`),
 so they are administered from `/admin/` or from the in-app **Team** page — no
@@ -925,7 +939,7 @@ authenticated officer account.
 | POST | `/api/fraud/runs/{id}/report/` | ✓ | Build a run's case report and hash it into the ledger. Does **not** send — `send` defaults to false |
 | GET | `/api/fraud/rings/` | ✓ | Alerts for a run, highest risk first (`?run=`, `?status=`, `?kind=`) |
 | GET | `/api/fraud/rings/{id}/` | ✓ | Alert detail: companies, invoices, score, explanation |
-| POST | `/api/fraud/rings/{id}/confirm/` | **S** | Confirms as the *authenticated* supervisor → appends a ledger block |
+| POST | `/api/fraud/rings/{id}/confirm/` | ✓ | Confirms as the *authenticated* officer → appends a ledger block |
 | POST | `/api/fraud/rings/{id}/dismiss/` | ✓ | `{reason, note}` — clears an alert as not fraud → appends a ledger block |
 | GET | `/api/fraud/dismissal-reasons/` | ✓ | The reason codes `dismiss` accepts |
 | GET | `/api/fraud/status/` | ✓ | Dashboard summary counters |

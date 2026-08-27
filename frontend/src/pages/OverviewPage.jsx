@@ -176,14 +176,7 @@ export default function OverviewPage({ status, rings, onRunDetection, running, l
                     <Capability ok>Review alerts and see the evidence</Capability>
                     <Capability ok>Clear an alert as not fraud</Capability>
                     <Capability ok={can.can_issue_report}>Issue case reports</Capability>
-                    <Capability ok={can.can_confirm}>
-                      Confirm an alert as fraudulent
-                      {!can.can_confirm && (
-                        <span className="mt-0.5 block text-[11px] text-zinc-500">
-                          A supervisor sanctions cases.
-                        </span>
-                      )}
-                    </Capability>
+                    <Capability ok={can.can_confirm}>Confirm an alert as fraudulent</Capability>
                     <Capability ok={can.can_view_team}>See every officer’s activity</Capability>
                   </ul>
                 </div>

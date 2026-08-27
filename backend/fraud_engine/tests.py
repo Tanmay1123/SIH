@@ -1279,7 +1279,10 @@ class RoleTests(TestCase):
     def test_a_plain_account_is_an_officer(self):
         self.assertFalse(roles.is_supervisor(self.officer))
         self.assertEqual(roles.role_of(self.officer), "officer")
-        self.assertFalse(roles.permissions_for(self.officer)["can_confirm"])
+        # Being an officer is about what you can SEE and CHANGE, not about
+        # whether you may act on the queue - see the confirm tests below.
+        self.assertFalse(roles.permissions_for(self.officer)["can_view_team"])
+        self.assertFalse(roles.permissions_for(self.officer)["can_edit_settings"])
 
     def test_group_membership_makes_a_supervisor(self):
         self.assertTrue(roles.is_supervisor(self.supervisor))
@@ -1293,14 +1296,24 @@ class RoleTests(TestCase):
 
     # ---- the boundary that matters ---------------------------------------
 
-    def test_an_officer_cannot_confirm_an_alert(self):
+    def test_an_officer_can_confirm_an_alert(self):
+        """
+        Confirming used to be supervisor-only. It is an officer's call now -
+        they are the one who read the evidence, and routing every confirmation
+        through a supervisor made the supervisor a bottleneck on the queue
+        rather than a check on it.
+
+        What must not regress is the attribution: the confirmation has to
+        record the officer who actually made it.
+        """
         response = self._auth(self.officer).post(
             f"/api/fraud/rings/{self.alert.id}/confirm/"
         )
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 201)
         self.alert.refresh_from_db()
-        self.assertEqual(self.alert.status, FlaggedRing.STATUS_PENDING)
+        self.assertEqual(self.alert.status, FlaggedRing.STATUS_CONFIRMED)
+        self.assertEqual(self.alert.reviewed_by, self.officer)
 
     def test_a_supervisor_can_confirm_an_alert(self):
         response = self._auth(self.supervisor).post(
@@ -1385,8 +1398,11 @@ class RoleTests(TestCase):
         response = self._auth(self.officer).get("/api/auth/me/")
 
         self.assertEqual(response.data["role"], "officer")
-        self.assertFalse(response.data["permissions"]["can_confirm"])
+        self.assertTrue(response.data["permissions"]["can_confirm"])
         self.assertTrue(response.data["permissions"]["can_dismiss"])
+        # Still an officer: the team view and settings stay supervisor-only.
+        self.assertFalse(response.data["permissions"]["can_view_team"])
+        self.assertFalse(response.data["permissions"]["can_edit_settings"])
 
     def test_an_officer_can_update_their_own_email(self):
         response = self._auth(self.officer).patch(

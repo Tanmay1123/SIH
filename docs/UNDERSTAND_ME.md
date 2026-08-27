@@ -805,18 +805,32 @@ to make every decision.
 
     OFFICER     upload data, run detection, review alerts, CLEAR an alert as
                 not fraud, issue case reports.
-    SUPERVISOR  everything above, plus CONFIRM an alert as fraudulent, see
+    SUPERVISOR  everything above, plus see
                 every officer's activity, and change detection policy.
 
-**Why the line falls exactly there.** Confirming an alert is the act that
-starts recovery proceedings against a real business. It is the one decision
-that warrants a second, more senior pair of eyes, and it mirrors how GST
-enforcement genuinely works: an officer builds a case, a superior sanctions it.
+**Why the line falls exactly there.** Casework belongs to the officer, both
+directions: they read the evidence, and they both confirm and clear.
 
-Clearing deliberately stays with the officer. Being able to say *"I looked, this
-is a normal business"* is the feedback the detector needs (§8b), and gating it
-behind a supervisor would mean it simply never happens — the queue would fill
-up and the model would keep learning nothing.
+Confirming was supervisor-only in earlier versions, on the argument that
+starting recovery proceedings against a real business warrants a second, more
+senior pair of eyes. In practice that made the supervisor a *queue* rather than
+a check — they had to re-enter every case behind the officer who had already
+worked it, and nothing progressed until they did.
+
+The accountability moved from before the decision to after it without getting
+weaker. Every confirmation records the authenticated officer who made it, that
+name enters the ledger alongside the model version and threshold they acted on,
+and supervisors see every officer's decisions on the Team page.
+
+Clearing was always the officer's, for a related reason. Being able to say *"I
+looked, this is a normal business"* is the feedback the detector needs (§8b),
+and gating it behind an approval step would mean it simply never happens — the
+queue would fill up and the model would keep learning nothing.
+
+What stays supervisor-only is oversight and policy: seeing the whole team's
+activity, and changing the thresholds everyone else works to. Note also that
+alerts, runs and reports are **not** scoped per user — every account sees all of
+them, whoever produced them.
 
 **Where the rules live.** `core/roles.py` answers who is what;
 `core/permissions.py` is the DRF class that enforces it. Membership is a Django

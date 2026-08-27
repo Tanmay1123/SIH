@@ -10,11 +10,10 @@ test_detection_is_fast_enough_to_run_synchronously.
 """
 from django.db import transaction
 from rest_framework import generics, status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from core.models import Company, Invoice, active_dataset
-from core.permissions import IsSupervisor
 from core.roles import permissions_for, role_of
 from core.views import StandardPagination
 
@@ -199,21 +198,25 @@ class FlaggedRingDetailView(generics.RetrieveAPIView):
 
 
 @api_view(["POST"])
-@permission_classes([IsSupervisor])
 @transaction.atomic
 def confirm_ring(request, pk):
     """
-    POST /api/fraud/rings/{id}/confirm/  — SUPERVISOR ONLY.
+    POST /api/fraud/rings/{id}/confirm/ — any authenticated officer.
 
-    Confirming an alert as fraudulent is the act that starts recovery
-    proceedings against a real business, so it is the one decision that needs a
-    second, more senior pair of eyes. An officer prepares the case and can
-    clear it; a supervisor sanctions it.
+    This was supervisor-only, on the argument that confirming starts recovery
+    proceedings and so wants a second, more senior pair of eyes. It is an
+    officer's decision now. The officer is the one who actually read the
+    evidence, and requiring a supervisor to re-enter the queue behind them made
+    the supervisor a bottleneck on it rather than a check on it.
+
+    Accountability did not move, it just stopped blocking: every confirmation
+    records the authenticated officer who made it, that name goes into the
+    tamper-evident ledger, and supervisors see every officer's decisions on the
+    Team page. The review is after the fact and on the record.
 
     This is also the point where a machine suggestion becomes a human decision,
-    so it is where the evidence is committed to the tamper-evident ledger -
-    along with the model version and threshold that produced the score they
-    acted on.
+    so it is where the evidence is committed to the ledger - along with the
+    model version and threshold that produced the score they acted on.
     """
     ring = FlaggedRing.objects.filter(pk=pk).select_related("run").first()
     if ring is None:

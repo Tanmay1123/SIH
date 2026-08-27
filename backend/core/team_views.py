@@ -98,10 +98,11 @@ def team_overview(request):
     """
     GET /api/team/ — every account, with what they have actually been doing.
 
-    Supervisor-only, and the reason the role exists: a supervisor sanctions
-    cases, so they need to see who is preparing them, how much of the queue
-    each officer has worked through, and what has been cleared rather than
-    pursued.
+    Supervisor-only, and the reason the role exists. Officers decide their own
+    cases - confirming is not gated - so oversight is after the fact rather than
+    in the way, and this is where it happens: who confirmed what, how much of
+    the queue each officer has worked through, and what was cleared rather than
+    pursued. Every row here is one officer's actual decisions, attributed.
     """
     from fraud_engine.models import CaseReport, DetectionRun, FlaggedRing
 

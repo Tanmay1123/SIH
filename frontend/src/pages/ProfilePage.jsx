@@ -64,9 +64,9 @@ export default function ProfilePage() {
             </ul>
             {!isSupervisor && (
               <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
-                Confirming an alert starts recovery proceedings against a real business, so it
-                is the one decision reserved for a supervisor. You prepare the case; they
-                sanction it.
+                Confirming an alert starts recovery proceedings against a real business. Every
+                decision you make is signed with your name in the audit ledger, and supervisors
+                can see all of them.
               </p>
             )}
           </div>

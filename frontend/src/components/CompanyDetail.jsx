@@ -308,36 +308,27 @@ function RingPanel({ ring, onConfirm, onDismiss, onSelectCompany, reviewing, ris
         {!decided && !dismissing && (
           <>
             <div className="flex gap-2">
-              {canConfirm ? (
-                <Button
-                  variant="danger"
-                  className="flex-1"
-                  onClick={() => onConfirm(ring.id)}
-                  disabled={reviewing}
-                >
-                  {reviewing ? 'Recording…' : 'Confirm as fraudulent'}
-                </Button>
-              ) : (
-                <Button
-                  variant="danger"
-                  className="flex-1"
-                  disabled
-                  title="Only a supervisor can confirm an alert as fraudulent"
-                >
-                  Confirm as fraudulent
-                </Button>
-              )}
+              <Button
+                variant="danger"
+                className="flex-1"
+                onClick={() => onConfirm(ring.id)}
+                disabled={reviewing || !canConfirm}
+                title={canConfirm ? undefined : 'You do not have permission to confirm alerts'}
+              >
+                {reviewing ? 'Recording…' : 'Confirm as fraudulent'}
+              </Button>
               <Button className="flex-1" onClick={() => setDismissing(true)} disabled={reviewing}>
                 Not fraud
               </Button>
             </div>
 
-            {!canConfirm && (
+            {canConfirm && (
               <Banner tone="info" className="mt-2.5">
                 <ShieldIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
-                  Confirming starts recovery proceedings against a real business, so it is a
-                  supervisor's decision. Clear it if it is not fraud, or leave it for review.
+                  Confirming records your name against this case in the audit ledger and starts
+                  recovery proceedings against a real business. Your supervisor sees every
+                  decision you make.
                 </span>
               </Banner>
             )}

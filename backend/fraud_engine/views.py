@@ -337,21 +337,31 @@ def dismissal_reasons(request):
 
 
 class CaseReportListView(generics.ListAPIView):
-    """GET /api/reports/ — every issued report, newest first. ?run=<id> to filter."""
+    """
+    GET /api/reports/ — every issued report, newest first.
+    ?run=<id> or ?company=<id> to filter to one or the other.
+    """
 
     serializer_class = CaseReportSerializer
     pagination_class = StandardPagination
 
     def get_queryset(self):
-        qs = CaseReport.objects.select_related("run", "run__dataset", "generated_by")
+        qs = CaseReport.objects.select_related(
+            "run", "run__dataset", "company", "generated_by"
+        )
         run_id = self.request.query_params.get("run")
         if run_id:
             qs = qs.filter(run_id=run_id)
+        company_id = self.request.query_params.get("company")
+        if company_id:
+            qs = qs.filter(company_id=company_id)
         return qs
 
 
 class CaseReportDetailView(generics.RetrieveAPIView):
-    queryset = CaseReport.objects.select_related("run", "run__dataset", "generated_by")
+    queryset = CaseReport.objects.select_related(
+        "run", "run__dataset", "company", "generated_by"
+    )
     serializer_class = CaseReportDetailSerializer
 
 
@@ -360,10 +370,13 @@ class CaseReportDetailView(generics.RetrieveAPIView):
 def create_report(request, pk):
     """
     POST /api/fraud/runs/{id}/report/
-    Body (optional): {"title": "...", "send": true, "recipients": ["a@b.com"]}
+    Body (optional): {"title": "...", "send": false, "recipients": ["a@b.com"]}
 
-    Builds the supervisor's case report for one run, hashes it into the audit
-    ledger, and emails it to the officer and their supervisor.
+    Builds the case report for one run and hashes it into the audit ledger.
+    Generating no longer sends it - `send` defaults to false, so an officer
+    can view or download the PDF first and send it deliberately afterwards
+    (POST /api/reports/{id}/send/), rather than mail going out the instant the
+    report is issued.
     """
     run = DetectionRun.objects.filter(pk=pk).select_related("dataset").first()
     if run is None:
@@ -383,6 +396,7 @@ def create_report(request, pk):
     html = reporting.render_report_html(run, summary, officer, recipients)
 
     report = CaseReport.objects.create(
+        report_type=CaseReport.REPORT_TYPE_RUN,
         run=run,
         title=title,
         generated_by=request.user,
@@ -393,19 +407,77 @@ def create_report(request, pk):
     )
 
     # Hash first, send second: the ledger records what was issued, and it
-    # should say so even if the mail server is misconfigured.
+    # should say so even if the mail server is misconfigured or the officer
+    # never gets around to sending it at all.
     block = ledger.append_block(
         ledger.build_report_payload(report, officer=officer)
     )
     report.ledger_block = block
     report.save(update_fields=["ledger_block"])
 
-    if data.get("send", True):
-        mailer.send_report(
-            report,
-            subject=f"[GST Fraud Detection] {title}",
-            text_body=reporting.plain_text_version(summary, officer),
-        )
+    if data.get("send"):
+        mailer.send_report(report, officer)
+
+    report.refresh_from_db()
+    return Response(
+        CaseReportDetailSerializer(report).data, status=status.HTTP_201_CREATED
+    )
+
+
+@api_view(["POST"])
+@transaction.atomic
+def create_company_report(request, pk):
+    """
+    POST /api/companies/{id}/report/
+    Body (optional): {"title": "...", "send": false, "recipients": ["a@b.com"]}
+
+    Builds a standalone report for one company - its registration details,
+    trade totals, and the same explanation sentences already shown in the
+    Network page's evidence panel - and hashes it into the audit ledger.
+
+    Open to any authenticated account, not gated to supervisors: this is
+    investigative material an officer pulls together while looking at a
+    flagged company, not a decision that needs sanctioning. It does not
+    require the company to be part of any alert, confirmed or otherwise -
+    "why does this look clean" is as legitimate a question as "why is this
+    red", and the report says so plainly when there is nothing to explain.
+    """
+    company = Company.objects.filter(pk=pk).first()
+    if company is None:
+        return Response({"detail": "Company not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    data = request.data or {}
+    officer = request.user.username
+    summary = reporting.build_company_summary(company)
+
+    extra = [e.strip() for e in (data.get("recipients") or []) if str(e).strip()]
+    recipients = mailer.resolve_recipients(getattr(request.user, "email", ""))
+    for email in extra:
+        if email.lower() not in {r.lower() for r in recipients}:
+            recipients.append(email)
+
+    title = (data.get("title") or "").strip() or f"Company report — {company.name}"
+    html = reporting.render_company_report_html(summary, officer)
+
+    report = CaseReport.objects.create(
+        report_type=CaseReport.REPORT_TYPE_COMPANY,
+        company=company,
+        title=title,
+        generated_by=request.user,
+        html=html,
+        summary=summary,
+        content_hash=reporting.content_hash(html, summary),
+        recipients=recipients,
+    )
+
+    block = ledger.append_block(
+        ledger.build_report_payload(report, officer=officer)
+    )
+    report.ledger_block = block
+    report.save(update_fields=["ledger_block"])
+
+    if data.get("send"):
+        mailer.send_report(report, officer)
 
     report.refresh_from_db()
     return Response(
@@ -415,20 +487,53 @@ def create_report(request, pk):
 
 @api_view(["POST"])
 def resend_report(request, pk):
-    """POST /api/reports/{id}/send/ — retry delivery after fixing SMTP settings."""
-    report = CaseReport.objects.filter(pk=pk).select_related("run").first()
+    """
+    POST /api/reports/{id}/send/ — send (or retry sending) this report.
+
+    The one call that actually puts mail on the wire, for a run report or a
+    company report alike. Generating a report and sending it are two
+    different actions on purpose: a supervisor's inbox is the one place a
+    mistake is hardest to take back, so the frontend gates this behind an
+    explicit confirmation rather than firing it the moment a report exists.
+    """
+    report = CaseReport.objects.filter(pk=pk).select_related("run", "company").first()
     if report is None:
         return Response({"detail": "Report not found."}, status=status.HTTP_404_NOT_FOUND)
 
-    mailer.send_report(
-        report,
-        subject=f"[GST Fraud Detection] {report.title}",
-        text_body=reporting.plain_text_version(
-            report.summary or {}, request.user.username
-        ),
-    )
+    mailer.send_report(report, request.user.username)
     report.refresh_from_db()
     return Response(CaseReportSerializer(report).data)
+
+
+@api_view(["GET"])
+def report_pdf(request, pk):
+    """
+    GET /api/reports/{id}/pdf/ — the report as a PDF.
+
+    Regenerated from the stored HTML on every request rather than cached as a
+    binary column: `report.content_hash` already proves that HTML has not
+    changed since it was issued, so there is nothing a stored PDF would add
+    except a second copy to keep in sync.
+
+    Defaults to an inline Content-Disposition so the browser's own PDF viewer
+    can render it straight into an <iframe> - "view in the program" without
+    a plugin. Pass ?download=1 for a Content-Disposition the browser will
+    save instead of display.
+    """
+    report = CaseReport.objects.filter(pk=pk).first()
+    if report is None:
+        return Response({"detail": "Report not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    from django.http import HttpResponse
+    from django.utils.text import slugify
+
+    pdf_bytes = reporting.render_pdf(report.html)
+    filename = f"{slugify(report.title) or 'report'}.pdf"
+    disposition = "attachment" if request.query_params.get("download") else "inline"
+
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+    return response
 
 
 @api_view(["GET"])

@@ -133,19 +133,32 @@ class DetectionRunSerializer(serializers.ModelSerializer):
 
 
 class CaseReportSerializer(serializers.ModelSerializer):
-    run_name = serializers.CharField(source="run.name", read_only=True)
-    dataset_name = serializers.CharField(source="run.dataset.name", read_only=True)
+    # SerializerMethodFields, not `source="run.name"` CharFields: a company
+    # report has no run, and DRF's dotted-source traversal raises on the None
+    # in the middle rather than quietly returning null.
+    run_name = serializers.SerializerMethodField()
+    dataset_name = serializers.SerializerMethodField()
+    company_name = serializers.SerializerMethodField()
+    company_gstin = serializers.SerializerMethodField()
     generated_by_name = serializers.SerializerMethodField()
     status_label = serializers.CharField(source="get_status_display", read_only=True)
+    report_type_label = serializers.CharField(
+        source="get_report_type_display", read_only=True
+    )
     ledger_index = serializers.SerializerMethodField()
 
     class Meta:
         model = CaseReport
         fields = [
             "id",
+            "report_type",
+            "report_type_label",
             "run",
             "run_name",
             "dataset_name",
+            "company",
+            "company_name",
+            "company_gstin",
             "title",
             "generated_at",
             "generated_by_name",
@@ -158,6 +171,18 @@ class CaseReportSerializer(serializers.ModelSerializer):
             "error",
             "ledger_index",
         ]
+
+    def get_run_name(self, obj):
+        return obj.run.name if obj.run_id else None
+
+    def get_dataset_name(self, obj):
+        return obj.run.dataset.name if obj.run_id else None
+
+    def get_company_name(self, obj):
+        return obj.company.name if obj.company_id else None
+
+    def get_company_gstin(self, obj):
+        return obj.company.gstin if obj.company_id else None
 
     def get_generated_by_name(self, obj):
         return obj.generated_by.username if obj.generated_by_id else None

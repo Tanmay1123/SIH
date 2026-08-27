@@ -1,0 +1,120 @@
+gstin,name,band,planted_as,group
+27ZPZQF8830A3ZR,"Ray, Sathe and Bandi",high,ring_shell,ring-1
+07BNXYN9705R3ZN,Zachariah-Tank,high,ring_shell,ring-1
+27AOFRX5672F4ZF,"D’Alia, Pillay and Bajaj",high,ring_shell,ring-1
+09YYSXC1878M7Z9,Setty and Sons,high,ring_shell,ring-1
+32IACFW7071R6ZE,"Chowdhury, Golla and Garde",high,ring_shell,ring-2
+24FULKL9431F6ZB,"Pall, Natarajan and Pal",high,ring_shell,ring-2
+29VHNFX9057Q9ZF,"Mohan, Korpal and Chauhan",high,ring_shell,ring-2
+29PBJBI4063F3ZL,Bhatti and Sons,high,ring_shell,ring-2
+36UQXPA3525T3ZU,Subramanian-Bhandari,high,ring_shell,ring-2
+36AMVEW0495U7ZQ,Ben-Kuruvilla,high,ring_shell,ring-2
+29EEEDM1207Z5ZI,Garde Group,low,honest_two_way_trader,honest-loop-4
+06FFMGW8098X2ZO,Dewan-Warrior,clean,ordinary_trader,
+06WTKXB3624X2ZZ,Sekhon and Sons,clean,ordinary_trader,
+27JJWTQ8319K2ZQ,Ram Group,low,honest_two_way_trader,honest-loop-3
+07AVUWO7886M4ZR,"Naik, Varughese and Mukherjee",clean,ordinary_trader,
+06HMMKP3107F5ZD,"Ramachandran, Ratti and Bobal",clean,ordinary_trader,
+06WAFKG4621R2ZO,Swamy LLC,clean,ordinary_trader,
+24SVGIC0584E3ZH,Buch PLC,clean,ordinary_trader,
+27VMTID3305Z9Z1,"Mall, Raghavan and Dugar",low,honest_two_way_trader,honest-loop-1
+09AREDJ3750L1ZR,Rao PLC,clean,ordinary_trader,
+06ZSOZA9116X9Z3,Rau-Konda,clean,ordinary_trader,
+19ELJJU0112Q1ZH,"Andra, Bobal and Bir",clean,ordinary_trader,
+07DHLRI6338N6ZW,Rege-Issac,clean,ordinary_trader,
+36PPFOZ0403V7Z7,"Bhakta, Kalla and Walla",clean,ordinary_trader,
+09LFTIT0622R5ZW,"Mangal, Sengupta and Patil",clean,ordinary_trader,
+27HMTFL8592A4ZD,Khatri Ltd,low,honest_two_way_trader,honest-loop-1
+06FHVNT7733I5ZV,"Sarraf, Mittal and Dewan",clean,ordinary_trader,
+32ZJXEX3262M8ZI,Nath-Shenoy,clean,ordinary_trader,
+27ALEPK7569U6ZG,Kamdar-Varkey,clean,ordinary_trader,
+33GTKCX4322Y9ZI,Kaul PLC,clean,ordinary_trader,
+07KUQLA3240I4ZW,Suri-Dubey,clean,ordinary_trader,
+07UAULE5677X8ZE,Warrior Ltd,clean,ordinary_trader,
+29EFAZI5543B4ZA,"Parmar, Sahni and Banerjee",clean,ordinary_trader,
+32DGWWG8013H9ZR,Mani PLC,clean,ordinary_trader,
+36VLZNB9706Y8Z5,"Patla, Issac and Batra",clean,ordinary_trader,
+36MZJBD4917K5Z9,"Prashad, Gupta and Mammen",clean,ordinary_trader,
+24XNQWD7385X3ZL,Loke-Kakar,clean,ordinary_trader,
+19GFKAV3735Q8ZB,Sha Inc,clean,ordinary_trader,
+24YYWVX1034K1ZA,"Munshi, Lanka and Palla",clean,ordinary_trader,
+24AGMGP8326M1ZX,"Kata, Dave and Naidu",clean,ordinary_trader,
+19UKDFQ9474N1ZH,Chacko PLC,clean,ordinary_trader,
+07KWILE8553U6ZA,"Agarwal, Bhatnagar and Sastry",clean,ordinary_trader,
+29ZAFKS8325T5Z6,Ramanathan-Yogi,clean,ordinary_trader,
+32JXXBH4534N8Z5,"Subramanian, Warrior and Salvi",clean,ordinary_trader,
+36OBMPC8728D9Z1,Yogi and Sons,clean,ordinary_trader,
+36OCSNL9677X2ZE,"Kashyap, Bhasin and Patil",clean,ordinary_trader,
+06YLMRX1588B6ZF,Bandi Inc,clean,ordinary_trader,
+33VSKKT9786Y3ZG,"Jayaraman, Varkey and Gola",clean,ordinary_trader,
+36FIYPN9843Q2Z7,"Tara, Chakrabarti and Nagar",clean,ordinary_trader,
+24QZZUH6664T7ZI,Kaul-Saran,low,honest_two_way_trader,honest-loop-2
+33SXHBV5455Q3ZA,Vora LLC,clean,ordinary_trader,
+29FKTQX9100V7ZB,Saha and Sons,clean,ordinary_trader,
+27SMUUO2665D2ZB,Sampath-Pai,clean,ordinary_trader,
+27ZXPIC6089I8ZK,Barman and Sons,clean,ordinary_trader,
+33ZBNHU0943P7ZR,"Oak, Kohli and Walia",clean,ordinary_trader,
+19ZJYJV7014C7ZU,Jaggi-Jain,clean,ordinary_trader,
+27XCGLU6888M7Z9,Korpal-Wadhwa,clean,ordinary_trader,
+24HHIGA2305T5Z7,Kari-Divan,clean,ordinary_trader,
+07HPZMN5057X8Z8,Padmanabhan-Savant,clean,ordinary_trader,
+32CSIUV0454F1ZA,Rajagopalan-Murty,clean,ordinary_trader,
+19CINWU1856P4ZV,Jhaveri and Sons,clean,ordinary_trader,
+06FAQAP4122I4ZE,"Agate, Bhardwaj and Pai",low,honest_two_way_trader,honest-loop-3
+09EULJN4456L1ZL,Sharaf-Brahmbhatt,low,honest_two_way_trader,honest-loop-4
+29NHUTK5280X8ZT,Palan-Dash,clean,ordinary_trader,
+19VUHEQ8805P5ZR,Patel Inc,clean,ordinary_trader,
+33PVFCK5757F9ZU,Sani PLC,clean,ordinary_trader,
+32CLEZO9487M4ZJ,Dani-Luthra,clean,ordinary_trader,
+07TUAFV0647D4Z4,"Shah, Deep and Sarkar",clean,ordinary_trader,
+29GCOAS1769B1ZC,Balan-Das,clean,ordinary_trader,
+09GJYTU8142N9ZG,"Dayal, Andra and Goyal",clean,ordinary_trader,
+32BEJPU7148L1Z5,Nair LLC,clean,ordinary_trader,
+07LAEKR6024L4ZM,Saha-Ravel,clean,ordinary_trader,
+27IOSSF2051N4ZH,Konda LLC,clean,ordinary_trader,
+33JCJFN2696A7ZH,Agarwal-Mahajan,clean,ordinary_trader,
+27ZOOLX7194T4Z6,Parsa Ltd,clean,ordinary_trader,
+19YDRKQ8981G8Z0,Ramachandran and Sons,low,honest_two_way_trader,honest-loop-4
+32OZGOZ2432H7ZB,Bhardwaj-Dash,clean,ordinary_trader,
+29CODLF5738S2ZV,Loyal-Parikh,clean,ordinary_trader,
+09EAVZF4445T5ZF,Bhandari Group,clean,ordinary_trader,
+06YWWNO5198J8ZW,Shere-Ganguly,clean,ordinary_trader,
+29CBPWW7946Z2ZA,Chakraborty-Palla,clean,ordinary_trader,
+19PLHHW1016H9ZF,Dalal LLC,clean,ordinary_trader,
+07ONTHA8211P8ZV,"Kohli, Rana and Sem",clean,ordinary_trader,
+36XEDXQ4487H8ZR,"Halder, Bobal and Mutti",clean,ordinary_trader,
+29UTSSL5497K4Z2,Ranganathan-Bansal,low,honest_two_way_trader,honest-loop-2
+29JQZRD1863U2Z1,Rege-Bora,clean,ordinary_trader,
+24UPLTN9627B4Z5,Lad-Aggarwal,clean,ordinary_trader,
+06BAGOT5114I3ZB,Goel Inc,low,honest_two_way_trader,honest-loop-3
+06BYUOB2814C3Z6,Muni Inc,clean,ordinary_trader,
+24ZMIAB1800N3ZA,Magar PLC,clean,ordinary_trader,
+27LQOKU1297U4Z3,Toor and Sons,clean,ordinary_trader,
+27WIYMC1225Z2ZK,Patel Inc,clean,ordinary_trader,
+36EAVZD5995V1ZW,Pau-Kashyap,clean,ordinary_trader,
+24WDFFK6372L6ZG,Misra Inc,clean,ordinary_trader,
+27DLLPY9697K6ZC,"Khurana, Kari and Raman",clean,ordinary_trader,
+29GHOXW1991A4ZA,"Sarin, Sabharwal and Behl",clean,ordinary_trader,
+32HRUDX5644S8Z9,Walla Inc,clean,ordinary_trader,
+06FOYRN1089G8ZA,Dutt-Sengupta,clean,ordinary_trader,
+36GNWQX9803V1ZI,"Dugar, Lal and Borde",clean,ordinary_trader,
+06RANFK6405V9Z5,Suri PLC,clean,ordinary_trader,
+29QKBDF0435G7ZL,Vohra PLC,clean,ordinary_trader,
+19UQTPQ2259G5ZS,"Kadakia, Mannan and Uppal",clean,ordinary_trader,
+07SMIEI8471F2ZB,Tandon and Sons,clean,ordinary_trader,
+24YOQGQ4383D7ZJ,Bath Ltd,clean,ordinary_trader,
+06RGXNS6258D5ZB,Kalita and Sons,clean,ordinary_trader,
+29KTEZO9632U3ZL,Pillai-Ravel,clean,ordinary_trader,
+36WXXDM3871X2Z4,Deol and Sons,low,honest_two_way_trader,honest-loop-3
+07ABDII1174G9ZY,"Thaman, Sant and Thakur",clean,ordinary_trader,
+29BGPKH2454D9ZH,Tailor-Gole,clean,ordinary_trader,
+07NUJPG7828Q1ZF,"Nagar, Magar and Chauhan",medium,grey_ring_member,grey-ring-1
+32NCEZY3306X8ZQ,Dhar LLC,medium,grey_ring_member,grey-ring-1
+06RPWDU5021D3Z1,"Chandran, Dhar and Modi",medium,grey_ring_member,grey-ring-1
+24GYOUU9943P5ZV,Sarraf and Sons,medium,grey_ring_member,grey-ring-2
+29QWAFK3462C2ZZ,Pradhan and Sons,medium,grey_ring_member,grey-ring-2
+36MXXOD2635L2ZC,Trivedi-Oak,medium,grey_ring_member,grey-ring-2
+06IEVQG3946F7ZP,Amble LLC,medium,grey_ring_member,grey-ring-2
+29AUOHY9915P1Z9,Vora-Mitra,high,invoice_mill,mill-1
+36WNVVM4926G7Z0,Badami and Sons,high,invoice_mill,mill-2
+24XLEYG4981J6ZB,"Madan, Purohit and Bir",medium,grey_mill,grey-mill-1

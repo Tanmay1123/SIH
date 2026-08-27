@@ -16,6 +16,21 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # In Docker the variables are injected by compose instead and this is a no-op.
 load_dotenv(BASE_DIR.parent / ".env")
 
+# python.org's macOS installer ships Python without wiring it to the system
+# keychain's CA bundle, so smtplib's TLS handshake to a real mail server fails
+# with "unable to get local issuer certificate" - not a code bug, a missing
+# trust store. The usual fix is running that Python version's
+# "Install Certificates.command" once, by hand, on that one machine. Pointing
+# SSL_CERT_FILE at the `certifi` bundle already on disk does the same thing
+# without that manual step, so it also works unmodified in Docker, in CI, and
+# on a teammate's laptop that never ran the installer's fixup script.
+try:
+    import certifi
+
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+except ImportError:
+    pass
+
 
 def env_bool(name: str, default: bool = False) -> bool:
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}

@@ -14,6 +14,7 @@ One file, split into classes by concern:
   AppSettingsTests     - does policy come from the database, then .env?
   DatasetLabTests      - does the generator produce what it says it does?
   ManagementCommandTests - do setup_accounts and reset_data behave?
+  ReportPdfTests       - PDF generation, company reports, generate-vs-send
 """
 from datetime import date, timedelta
 from io import StringIO
@@ -25,7 +26,7 @@ from django.contrib.auth.models import Group, User
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from fraud_engine.synthetic_network import build_synthetic_network
@@ -1025,7 +1026,7 @@ class CaseReportTests(TestCase):
             recipients=["supervisor@example.com"],
         )
 
-        mailer.send_report(report, "subject", "body")
+        mailer.send_report(report, "officer")
         report.refresh_from_db()
 
         self.assertEqual(report.status, CaseReport.STATUS_SENT)
@@ -1037,11 +1038,196 @@ class CaseReportTests(TestCase):
             run=self.run, title="Case report", html="<p>x</p>", recipients=[]
         )
 
-        mailer.send_report(report, "subject", "body")
+        mailer.send_report(report, "officer")
         report.refresh_from_db()
 
         self.assertEqual(report.status, CaseReport.STATUS_FAILED)
         self.assertIn("No recipients", report.error)
+
+
+class ReportPdfTests(TestCase):
+    """
+    The PDF path, and the two report shapes that share it.
+
+    A run report summarises a whole detection pass; a company report is one
+    flagged node's own registration details and explanation, generated
+    on-demand rather than tied to any officer decision. Both are rendered to
+    HTML once, turned into a PDF on request, and use the same content_hash
+    already written to the ledger to prove the PDF says what was issued.
+    """
+
+    def setUp(self):
+        self.dataset = Dataset.objects.create(name="PDF dataset")
+        today = date.today()
+        companies = [
+            Company.objects.create(
+                dataset=self.dataset, gstin=f"27AAAAA0000A1Z{i}", pan=f"AAAAA000{i}A",
+                name=f"Rupee Traders {i}", director_name=f"Director {i}",
+                registered_address=f"{i} Test Street",
+                registered_date=today - timedelta(days=200), declared_turnover=1_000_000,
+            )
+            for i in range(3)
+        ]
+        for a, b in zip(companies, companies[1:] + companies[:1]):
+            Invoice.objects.create(
+                dataset=self.dataset, seller=a, buyer=b, amount=500_000,
+                date=today - timedelta(days=10), goods_description="Test goods",
+                has_eway_bill=False,
+            )
+        self.dataset.activate()
+        self.companies = companies
+        self.officer = User.objects.create_user(
+            "pdfofficer", password="pw-pdf-12345", email="o@example.com"
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.officer)
+
+    # ---- render_pdf --------------------------------------------------------
+
+    def test_render_pdf_produces_a_real_pdf(self):
+        pdf_bytes = reporting.render_pdf("<p>Hello</p>")
+
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+    def test_render_pdf_survives_the_rupee_sign(self):
+        """
+        xhtml2pdf's default fonts have no glyph for ₹ - this is a regression
+        guard on the fallback, not just a "doesn't crash" smoke test.
+        """
+        pdf_bytes = reporting.render_pdf(f"<p>{reporting.inr(1_25_00_000)}</p>")
+
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+    # ---- company report -----------------------------------------------------
+
+    def test_company_summary_reads_the_same_evidence_as_the_evidence_panel(self):
+        run = execute_run(name="Run 1", user=self.officer)
+        company = self.companies[0]
+
+        summary = reporting.build_company_summary(company)
+
+        self.assertEqual(summary["gstin"], company.gstin)
+        self.assertEqual(summary["director_name"], company.director_name)
+        self.assertIsInstance(summary["explanation"], list)
+        self.assertIsInstance(summary["alerts"], list)
+
+    def test_company_report_html_contains_the_registration_details(self):
+        summary = reporting.build_company_summary(self.companies[0])
+
+        html = reporting.render_company_report_html(summary, "officer")
+
+        self.assertIn("Rupee Traders 0", html)
+        self.assertIn(self.companies[0].gstin, html)
+        self.assertIn(self.companies[0].director_name, html)
+
+    def test_a_company_with_no_alerts_still_gets_a_readable_report(self):
+        """A clean company is a legitimate thing to ask about, not an error."""
+        summary = reporting.build_company_summary(self.companies[0])
+
+        html = reporting.render_company_report_html(summary, "officer")
+
+        self.assertIn("does not appear in any flagged ring or mill", html)
+        self.assertIn("not itself", html)  # the "not a finding of fraud" disclaimer
+
+    def test_creating_a_company_report_writes_a_ledger_block(self):
+        response = self.client.post(f"/api/companies/{self.companies[0].id}/report/")
+
+        self.assertEqual(response.status_code, 201)
+        report = CaseReport.objects.get(pk=response.data["id"])
+        self.assertEqual(report.report_type, CaseReport.REPORT_TYPE_COMPANY)
+        self.assertEqual(report.company_id, self.companies[0].id)
+        self.assertIsNotNone(report.ledger_block)
+        self.assertTrue(ledger.verify_chain()["valid"])
+
+    def test_generating_a_company_report_does_not_send_it_by_default(self):
+        response = self.client.post(f"/api/companies/{self.companies[0].id}/report/")
+
+        self.assertEqual(response.data["status"], "draft")
+
+    def test_an_officer_without_a_supervisor_role_can_still_request_one(self):
+        """
+        This is investigative material, not a decision - unlike confirming an
+        alert, no supervisor gate applies here.
+        """
+        response = self.client.post(f"/api/companies/{self.companies[0].id}/report/")
+
+        self.assertEqual(response.status_code, 201)
+
+    def test_a_missing_company_returns_404_not_a_crash(self):
+        response = self.client.post("/api/companies/999999/report/")
+
+        self.assertEqual(response.status_code, 404)
+
+    # ---- the pdf endpoint ---------------------------------------------------
+
+    def test_report_pdf_endpoint_returns_a_pdf(self):
+        created = self.client.post(f"/api/companies/{self.companies[0].id}/report/").data
+
+        response = self.client.get(f"/api/reports/{created['id']}/pdf/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("inline", response["Content-Disposition"])
+        self.assertTrue(response.content.startswith(b"%PDF"))
+
+    def test_report_pdf_endpoint_can_force_a_download(self):
+        created = self.client.post(f"/api/companies/{self.companies[0].id}/report/").data
+
+        response = self.client.get(f"/api/reports/{created['id']}/pdf/?download=1")
+
+        self.assertIn("attachment", response["Content-Disposition"])
+
+    def test_run_report_pdf_also_renders(self):
+        run = execute_run(name="Run 1", user=self.officer)
+        created = self.client.post(f"/api/fraud/runs/{run.id}/report/").data
+
+        response = self.client.get(f"/api/reports/{created['id']}/pdf/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.content.startswith(b"%PDF"))
+
+    # ---- generate vs send is now two steps ----------------------------------
+
+    def test_issuing_a_run_report_does_not_send_it_by_default(self):
+        run = execute_run(name="Run 1", user=self.officer)
+
+        response = self.client.post(f"/api/fraud/runs/{run.id}/report/")
+
+        self.assertEqual(response.data["status"], "draft")
+
+    def test_send_endpoint_delivers_a_generated_report(self):
+        created = self.client.post(f"/api/companies/{self.companies[0].id}/report/").data
+
+        response = self.client.post(f"/api/reports/{created['id']}/send/")
+
+        self.assertEqual(response.data["status"], "sent")
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_the_sent_email_carries_a_pdf_attachment_and_a_short_body(self):
+        from django.core import mail
+
+        report = CaseReport.objects.create(
+            report_type=CaseReport.REPORT_TYPE_COMPANY,
+            company=self.companies[0],
+            title="Company report — Rupee Traders 0",
+            html=reporting.render_company_report_html(
+                reporting.build_company_summary(self.companies[0]), "officer"
+            ),
+            summary=reporting.build_company_summary(self.companies[0]),
+            recipients=["supervisor@example.com"],
+        )
+
+        mailer.send_report(report, "officer")
+
+        self.assertEqual(len(mail.outbox), 1)
+        sent = mail.outbox[0]
+        self.assertEqual(len(sent.attachments), 1)
+        filename, content, mimetype = sent.attachments[0]
+        self.assertEqual(mimetype, "application/pdf")
+        self.assertTrue(content.startswith(b"%PDF"))
+        # The body is a short cover note, not the whole report pasted in.
+        self.assertLess(len(sent.body), 1000)
+        self.assertIn("attached", sent.body.lower())
 
 
 class RoleTests(TestCase):

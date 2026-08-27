@@ -14,6 +14,7 @@ import {
   Button,
   Card,
   CardHeader,
+  Dialog,
   EmptyState,
   Field,
   formatInr,
@@ -27,7 +28,6 @@ import {
 } from '../components/ui.jsx'
 import {
   CheckIcon,
-  CloseIcon,
   FileIcon,
   PlayIcon,
   PulseIcon,
@@ -97,12 +97,25 @@ export default function DetectionsPage({ status, onChanged }) {
     }
   }
 
+  const [notice, setNotice] = useState(null)
+
   const handleIssue = async (run) => {
     setBusy(`rep-${run.id}`)
     setError(null)
+    setNotice(null)
     try {
       await createReport(run.id, { title: `Case report — ${run.name}` })
       await load()
+      // Generating no longer sends it - that is now a deliberate second step
+      // on the Reports page, gated behind a confirmation, so the person who
+      // clicked "Generate" gets pointed at where to view or send it rather
+      // than assuming mail already went out.
+      setNotice(
+        <>
+          Report generated. <Link to="/reports" className="font-medium underline">Open Reports</Link> to
+          view the PDF, download it, or send it to your supervisor.
+        </>,
+      )
     } catch (e) {
       setError(e?.response?.data?.detail || e.message)
     } finally {
@@ -142,6 +155,11 @@ export default function DetectionsPage({ status, onChanged }) {
         {error && (
           <Banner tone="danger" className="mb-4">
             {error}
+          </Banner>
+        )}
+        {notice && (
+          <Banner tone="good" className="mb-4">
+            {notice}
           </Banner>
         )}
 
@@ -239,7 +257,7 @@ function RunCard({ run, isCurrent, busy, canIssue, onIssue, onDelete }) {
               disabled={busy === `rep-${run.id}`}
             >
               {busy === `rep-${run.id}` ? <Spinner /> : null}
-              {run.report_count > 0 ? 'Issue again' : 'Issue report'}
+              {run.report_count > 0 ? 'Generate again' : 'Generate report'}
             </Button>
           )}
           <button
@@ -299,33 +317,12 @@ function RunCard({ run, isCurrent, busy, canIssue, onIssue, onDelete }) {
 
 // ---------------------------------------------------------------------------
 // Dialogs
+//
+// The modal chrome itself (`Dialog`) moved to components/ui.jsx once the
+// report send-confirmation flow needed the exact same thing - a title, a
+// close button, a footer for actions - and duplicating it a second time
+// would have meant two things to keep visually in sync by hand.
 // ---------------------------------------------------------------------------
-
-function Dialog({ title, subtitle, onClose, children, footer }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
-          <div>
-            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h2>
-            {subtitle && <p className="mt-1 text-xs leading-relaxed text-zinc-500">{subtitle}</p>}
-          </div>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-lg p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-          >
-            <CloseIcon className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="px-5 py-4">{children}</div>
-        {footer && (
-          <div className="border-t border-zinc-200 px-5 py-3.5 dark:border-zinc-800">{footer}</div>
-        )}
-      </div>
-    </div>
-  )
-}
 
 function RunDialog({ onClose, onRun }) {
   const [name, setName] = useState('')

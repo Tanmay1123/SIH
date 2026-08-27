@@ -9,6 +9,11 @@ psycopg2-binary>=2.9,<3.0
 
 # Config
 python-dotenv>=1.0
+# Also used directly in settings.py to fix a real SMTP TLS failure on macOS
+# Python installs that were never pointed at a CA bundle - see the comment
+# there. Declared explicitly rather than left as xhtml2pdf's transitive
+# dependency, since removing xhtml2pdf later should not silently break email.
+certifi>=2024.2.2
 
 # Synthetic data generation
 Faker>=25.0
@@ -22,3 +27,10 @@ networkx>=3.3
 scikit-learn>=1.4
 xgboost>=2.0
 shap>=0.45
+
+# Report PDFs
+# Pure-Python (reportlab under the hood) - no system libraries required,
+# unlike WeasyPrint which needs Pango/Cairo/GDK-Pixbuf installed on the host.
+# That matters here: this has to build the same way in Docker, on a judge's
+# laptop, and in CI, with nothing extra to apt-get or brew install.
+xhtml2pdf>=0.2.17

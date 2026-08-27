@@ -18,11 +18,13 @@ urlpatterns = [
     path("fraud/rings/<int:pk>/confirm/", views.confirm_ring, name="ring-confirm"),
     path("fraud/rings/<int:pk>/dismiss/", views.dismiss_ring, name="ring-dismiss"),
     path("fraud/dismissal-reasons/", views.dismissal_reasons, name="dismissal-reasons"),
-    # Case reports to the supervisor
+    # Reports - a run's case report, or one company's own report
     path("reports/", views.CaseReportListView.as_view(), name="report-list"),
     path("reports/mail-status/", views.mail_status, name="report-mail-status"),
     path("reports/<int:pk>/", views.CaseReportDetailView.as_view(), name="report-detail"),
+    path("reports/<int:pk>/pdf/", views.report_pdf, name="report-pdf"),
     path("reports/<int:pk>/send/", views.resend_report, name="report-send"),
+    path("companies/<int:pk>/report/", views.create_company_report, name="company-report"),
     # Dataset Lab - fabricated test data, deliberately outside the console
     path("lab/presets/", lab_views.lab_presets, name="lab-presets"),
     path("lab/preview/", lab_views.lab_preview, name="lab-preview"),

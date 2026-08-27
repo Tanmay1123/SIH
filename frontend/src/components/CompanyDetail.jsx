@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react'
-import { getCompany, getDismissalReasons } from '../api'
+import { Link } from 'react-router-dom'
+import {
+  createCompanyReport,
+  downloadReportPdf,
+  getCompany,
+  getDismissalReasons,
+  getReportPdfBlob,
+  resendReport,
+} from '../api'
 import { useAuth } from '../useAuth.jsx'
-import { Banner, Button, Select, Textarea } from './ui.jsx'
-import { HubIcon, LoopIcon, ShieldIcon } from '../icons.jsx'
+import { Banner, Button, ConfirmDialog, Dialog, Select, Spinner, Textarea } from './ui.jsx'
+import { DocumentIcon, HubIcon, LoopIcon, MailIcon, ShieldIcon } from '../icons.jsx'
 
 /**
  * The evidence panel.
@@ -448,6 +456,186 @@ function SingleCompanyPanel({ companyId, onBack, riskThreshold }) {
             ))}
           </ul>
         </Section>
+      )}
+
+      <Section title="COMPANY REPORT">
+        <CompanyReportPanel company={company} />
+      </Section>
+    </div>
+  )
+}
+
+/**
+ * Generate this company's own report - its registration details plus why its
+ * score is what it is - as a PDF, right from the panel an officer is already
+ * looking at. Independent of any officer decision on the alerts it appears
+ * in: "why does this look clean" is as legitimate a question as "why is this
+ * red", so there is nothing to confirm or dismiss before this is available.
+ *
+ * Once generated, the report also shows up on the Reports page like any other
+ * - this panel is a shortcut to producing one, not a second place they live.
+ */
+function CompanyReportPanel({ company }) {
+  const [report, setReport] = useState(null)
+  const [busy, setBusy] = useState(null)
+  const [error, setError] = useState(null)
+  const [viewing, setViewing] = useState(null) // object URL
+  const [confirming, setConfirming] = useState(false)
+  const [sent, setSent] = useState(false)
+
+  useEffect(() => {
+    setReport(null)
+    setError(null)
+    setSent(false)
+    return () => {
+      if (viewing) URL.revokeObjectURL(viewing)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company.id])
+
+  const handleGenerate = async () => {
+    setBusy('generate')
+    setError(null)
+    try {
+      setReport(await createCompanyReport(company.id))
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleView = async () => {
+    setBusy('view')
+    setError(null)
+    try {
+      const blob = await getReportPdfBlob(report.id)
+      if (viewing) URL.revokeObjectURL(viewing)
+      setViewing(URL.createObjectURL(blob))
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleDownload = async () => {
+    setBusy('download')
+    setError(null)
+    try {
+      await downloadReportPdf(report.id)
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleSend = async () => {
+    setBusy('send')
+    setError(null)
+    try {
+      const updated = await resendReport(report.id)
+      setReport(updated)
+      setConfirming(false)
+      setSent(true)
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (!report) {
+    return (
+      <div>
+        <p className="mb-2 text-xs leading-relaxed text-zinc-500">
+          A one-page PDF with this company&rsquo;s registration details and the evidence behind
+          its score - the same explanation shown above, in a document you can save or send.
+        </p>
+        <Button size="sm" variant="outline" onClick={handleGenerate} disabled={busy === 'generate'}>
+          {busy === 'generate' ? <Spinner className="h-3.5 w-3.5" /> : <DocumentIcon className="h-3.5 w-3.5" />}
+          {busy === 'generate' ? 'Generating…' : 'Generate report'}
+        </Button>
+        {error && <p className="mt-2 text-[11px] text-red-600 dark:text-red-400">{error}</p>}
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <p className="mb-2 text-xs text-zinc-600 dark:text-zinc-400">
+        Generated. <Link to="/reports" className="underline">It's also on the Reports page.</Link>
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" onClick={handleView} disabled={busy === 'view'}>
+          {busy === 'view' ? <Spinner className="h-3.5 w-3.5" /> : null}
+          View PDF
+        </Button>
+        <Button size="sm" variant="outline" onClick={handleDownload} disabled={busy === 'download'}>
+          {busy === 'download' ? <Spinner className="h-3.5 w-3.5" /> : null}
+          Download
+        </Button>
+        <Button size="sm" variant="primary" onClick={() => setConfirming(true)}>
+          <MailIcon className="h-3.5 w-3.5" />
+          {sent ? 'Send again' : 'Send to supervisor'}
+        </Button>
+      </div>
+      {sent && (
+        <p className="mt-2 text-[11px] text-brand-600 dark:text-brand-300">
+          Sent to {(report.recipients || []).join(', ') || 'nobody — no recipients configured'}.
+        </p>
+      )}
+      {error && <p className="mt-2 text-[11px] text-red-600 dark:text-red-400">{error}</p>}
+
+      {viewing && (
+        <Dialog
+          title={report.title}
+          onClose={() => setViewing(null)}
+          size="full"
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={handleDownload} disabled={busy === 'download'}>
+                {busy === 'download' ? <Spinner className="h-3.5 w-3.5" /> : null}
+                Download
+              </Button>
+              <Button variant="primary" onClick={() => setViewing(null)}>
+                Done
+              </Button>
+            </div>
+          }
+        >
+          <iframe title={report.title} src={viewing} className="h-[85vh] w-full border-0" />
+        </Dialog>
+      )}
+
+      {confirming && (
+        <ConfirmDialog
+          title="Send this report?"
+          confirmLabel="Send"
+          busy={busy === 'send'}
+          onConfirm={handleSend}
+          onClose={() => setConfirming(false)}
+        >
+          <p>
+            <strong className="text-zinc-900 dark:text-zinc-100">{report.title}</strong> will be
+            emailed as a PDF attachment to:
+          </p>
+          <ul className="mt-2 space-y-1">
+            {(report.recipients || []).length > 0 ? (
+              report.recipients.map((email) => (
+                <li key={email} className="font-mono text-xs">
+                  {email}
+                </li>
+              ))
+            ) : (
+              <li className="text-amber-600 dark:text-amber-400">
+                Nobody — no recipients are configured.
+              </li>
+            )}
+          </ul>
+          <p className="mt-3 text-xs text-zinc-500">This cannot be undone once it sends.</p>
+        </ConfirmDialog>
       )}
     </div>
   )

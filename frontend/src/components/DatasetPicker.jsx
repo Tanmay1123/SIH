@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { activateDataset, deleteDataset, getDatasets, renameDataset } from '../api'
-import { ChevronDownIcon, DatabaseIcon, TrashIcon } from '../icons.jsx'
+import { ChevronDownIcon, DatabaseIcon, EditIcon, TrashIcon } from '../icons.jsx'
 
 /**
  * Which upload the console is looking at.
@@ -131,7 +131,7 @@ export default function DatasetPicker({ activeId, onChanged }) {
             {datasets.map((dataset) => (
               <div
                 key={dataset.id}
-                className={`flex items-start gap-2 border-b border-zinc-200/70 px-3 py-2.5 last:border-0 dark:border-zinc-800/70 ${
+                className={`group flex items-start gap-2 border-b border-zinc-200/70 px-3 py-2.5 last:border-0 dark:border-zinc-800/70 ${
                   dataset.is_active ? 'bg-green-50/60 dark:bg-green-950/20' : ''
                 }`}
               >
@@ -149,23 +149,31 @@ export default function DatasetPicker({ activeId, onChanged }) {
                       className="w-full rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-xs text-zinc-900 outline-none dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     />
                   ) : (
-                    <button
-                      onDoubleClick={() => {
-                        setEditing(dataset.id)
-                        setDraftName(dataset.name)
-                      }}
-                      onClick={() => !dataset.is_active && handleActivate(dataset.id)}
-                      disabled={busy}
-                      title={dataset.is_active ? 'Double-click to rename' : 'Switch to this dataset'}
-                      className="block w-full truncate text-left text-xs font-medium text-zinc-900 disabled:opacity-50 dark:text-zinc-100"
-                    >
-                      {dataset.name}
-                      {dataset.is_active && (
-                        <span className="ml-1.5 rounded bg-green-100 px-1 py-0.5 text-[9px] font-semibold text-green-700 dark:bg-green-900/60 dark:text-green-300">
-                          ACTIVE
-                        </span>
-                      )}
-                    </button>
+                    <div className="flex min-w-0 items-center gap-1">
+                      <button
+                        onClick={() => !dataset.is_active && handleActivate(dataset.id)}
+                        disabled={busy}
+                        title={dataset.is_active ? dataset.name : 'Switch to this dataset'}
+                        className="block min-w-0 flex-1 truncate text-left text-xs font-medium text-zinc-900 disabled:opacity-50 dark:text-zinc-100"
+                      >
+                        {dataset.name}
+                        {dataset.is_active && (
+                          <span className="ml-1.5 rounded bg-green-100 px-1 py-0.5 text-[9px] font-semibold text-green-700 dark:bg-green-900/60 dark:text-green-300">
+                            ACTIVE
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditing(dataset.id)
+                          setDraftName(dataset.name)
+                        }}
+                        title="Rename"
+                        className="shrink-0 rounded p-1 text-zinc-400 opacity-0 transition-opacity hover:bg-zinc-100 hover:text-zinc-700 group-hover:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                      >
+                        <EditIcon className="h-3 w-3" />
+                      </button>
+                    </div>
                   )}
                   <div className="mt-0.5 text-[10px] text-zinc-500">
                     {dataset.company_count} companies · {dataset.invoice_count} invoices ·{' '}

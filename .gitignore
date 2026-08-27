@@ -31,6 +31,7 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+.claude/
 
 # ---------- ML model artifacts ----------
 # Large binary model blobs are build output and stay out of git.

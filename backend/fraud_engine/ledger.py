@@ -283,30 +283,48 @@ def build_dismissal_payload(ring, reason_label: str, officer: str, note: str = "
 
 def build_report_payload(report, officer: str) -> dict:
     """
-    Recorded when a case report is issued to a supervisor.
+    Recorded when a report is issued - a run's case report or a single
+    company's report; `report.report_type` says which.
 
     Only the hash of the report goes in, not its body: the block's job is to
     let anyone prove later that a given document is the one that was issued,
     and duplicating confidential contents into a second table would widen the
     exposure for no additional guarantee.
+
+    A run report and a company report carry different provenance (a run has a
+    model version and a dataset; a company has neither of its own - it borrows
+    them from whichever run last scored it), so model info is read from
+    `summary`, which both `reporting.build_summary` and
+    `reporting.build_company_summary` populate with the same two keys, rather
+    than reached for on `report.run` directly - that attribute is None for a
+    company report and would raise.
     """
-    run = report.run
-    return {
+    summary = report.summary or {}
+    payload = {
         "record_type": "case_report_issued",
         "report_id": report.id,
+        "report_type": getattr(report, "report_type", "run"),
         "title": report.title,
         "issued_by": officer,
         "issued_at": datetime.now(timezone.utc).isoformat(),
         "recipients": list(report.recipients or []),
         "content_sha256": report.content_hash,
-        "confirmed_count": (report.summary or {}).get("confirmed_count"),
-        "confirmed_value": (report.summary or {}).get("confirmed_value"),
-        "dismissed_count": (report.summary or {}).get("dismissed_count"),
+        "confirmed_count": summary.get("confirmed_count"),
+        "confirmed_value": summary.get("confirmed_value"),
+        "dismissed_count": summary.get("dismissed_count"),
         "model": {
-            "version": run.model_version,
-            "risk_threshold": run.risk_threshold,
-            "detection_run": run.name,
-            "detection_run_id": run.id,
-            "dataset": run.dataset.name,
+            "version": summary.get("model_version"),
+            "risk_threshold": summary.get("risk_threshold"),
         },
     }
+    if report.run_id:
+        payload["model"]["detection_run"] = report.run.name
+        payload["model"]["detection_run_id"] = report.run.id
+        payload["model"]["dataset"] = report.run.dataset.name
+    if getattr(report, "company_id", None):
+        payload["company"] = {
+            "id": report.company_id,
+            "name": report.company.name,
+            "gstin": report.company.gstin,
+        }
+    return payload

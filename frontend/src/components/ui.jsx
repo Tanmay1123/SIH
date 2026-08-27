@@ -5,6 +5,9 @@
  * of being re-improvised in every screen - which is what makes an interface
  * look assembled rather than designed. Every page below builds out of these.
  */
+import { useEffect } from 'react'
+
+import { CloseIcon } from '../icons.jsx'
 
 export const cx = (...parts) => parts.filter(Boolean).join(' ')
 
@@ -348,4 +351,121 @@ export function riskTone(score, threshold = 70) {
 
 export function riskTextClass(score, threshold = 70) {
   return TONES[riskTone(score, threshold) === 'neutral' ? 'muted' : riskTone(score, threshold)]
+}
+
+// ---------------------------------------------------------------------------
+// Dialog
+// ---------------------------------------------------------------------------
+
+/**
+ * A centred modal: a title, optional subtitle, body, and an optional footer
+ * for actions. Closes on Escape and on the backdrop click, so it behaves like
+ * every other dialog on the web without each caller wiring that up itself.
+ */
+const DIALOG_SIZES = {
+  sm: 'max-w-sm',
+  md: 'max-w-lg',
+  lg: 'max-w-2xl',
+  xl: 'max-w-4xl',
+  // Documents (a PDF preview) need the width a modal never otherwise asks
+  // for - this is the one size that scales with the viewport instead of
+  // capping at a fixed rem value.
+  full: 'max-w-[94vw]',
+}
+
+export function Dialog({ title, subtitle, onClose, children, footer, tone = 'default', size = 'md' }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose?.()
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const accent =
+    tone === 'danger'
+      ? 'border-b-red-200 dark:border-b-red-900'
+      : tone === 'good'
+        ? 'border-b-brand-200 dark:border-b-brand-900'
+        : 'border-b-zinc-200 dark:border-b-zinc-800'
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 p-4 backdrop-blur-sm"
+      onClick={(e) => e.target === e.currentTarget && onClose?.()}
+    >
+      <div
+        className={cx(
+          'w-full overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900',
+          DIALOG_SIZES[size] || DIALOG_SIZES.md,
+        )}
+      >
+        <div
+          className={cx(
+            'flex items-start justify-between gap-4 border-b px-5 py-4',
+            accent,
+          )}
+        >
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h2>
+            {subtitle && (
+              <p className="mt-1 text-xs leading-relaxed text-zinc-500">{subtitle}</p>
+            )}
+          </div>
+          {onClose && (
+            <button
+              onClick={onClose}
+              aria-label="Close"
+              className="shrink-0 rounded-lg p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            >
+              <CloseIcon className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+        <div className="px-5 py-4">{children}</div>
+        {footer && (
+          <div className="border-t border-zinc-200 px-5 py-3.5 dark:border-zinc-800">{footer}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * "Are you sure?" for an action with a real consequence outside the app - an
+ * email actually landing in an inbox, not just a row changing in a table.
+ * Used before every report send, so nothing goes out on a single misclick.
+ */
+export function ConfirmDialog({
+  title,
+  children,
+  confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
+  tone = 'default',
+  busy = false,
+  onConfirm,
+  onClose,
+}) {
+  return (
+    <Dialog
+      title={title}
+      onClose={busy ? undefined : onClose}
+      tone={tone}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            {cancelLabel}
+          </Button>
+          <Button
+            variant={tone === 'danger' ? 'danger' : 'primary'}
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            {busy ? <Spinner className="h-3.5 w-3.5" /> : null}
+            {busy ? 'Sending…' : confirmLabel}
+          </Button>
+        </div>
+      }
+    >
+      <div className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">{children}</div>
+    </Dialog>
+  )
 }

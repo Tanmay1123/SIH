@@ -158,20 +158,58 @@ export const getDismissalReasons = () =>
   client.get('/fraud/dismissal-reasons/').then((r) => r.data)
 
 // ---------------------------------------------------------------------------
-// Case reports to the supervisor
+// Reports — a run's case report, or one flagged company's own report
+//
+// Generating and sending are two separate calls on purpose. `send` defaults
+// to false on both create calls: a report is issued (and hashed into the
+// ledger) the moment it is generated, but nothing goes to anyone's inbox
+// until resendReport is called too - which the UI gates behind an explicit
+// confirmation, since an email actually landing in a supervisor's inbox is
+// not something a single misclick should be able to trigger.
 // ---------------------------------------------------------------------------
 
-export const getReports = () =>
-  client.get('/reports/', { params: { page_size: 100 } }).then((r) => r.data.results)
+export const getReports = (params = {}) =>
+  client.get('/reports/', { params: { page_size: 100, ...params } }).then((r) => r.data.results)
 
 export const getReport = (id) => client.get(`/reports/${id}/`).then((r) => r.data)
 
-export const createReport = (runId, { title = '', send = true, recipients = [] } = {}) =>
+export const createReport = (runId, { title = '', send = false, recipients = [] } = {}) =>
   client.post(`/fraud/runs/${runId}/report/`, { title, send, recipients }).then((r) => r.data)
+
+/** The per-company report: registration details + why its score is what it is. */
+export const createCompanyReport = (companyId, { title = '', send = false, recipients = [] } = {}) =>
+  client.post(`/companies/${companyId}/report/`, { title, send, recipients }).then((r) => r.data)
 
 export const resendReport = (id) => client.post(`/reports/${id}/send/`).then((r) => r.data)
 
 export const getMailStatus = () => client.get('/reports/mail-status/').then((r) => r.data)
+
+/** The PDF as a blob, for the browser's own viewer inside an <iframe>. */
+export const getReportPdfBlob = (id) =>
+  client.get(`/reports/${id}/pdf/`, { responseType: 'blob' }).then((r) => r.data)
+
+/** Saves the PDF to disk under the filename the server chose for it. */
+export async function downloadReportPdf(id) {
+  const response = await client.get(`/reports/${id}/pdf/`, {
+    params: { download: 1 },
+    responseType: 'blob',
+  })
+
+  const disposition = response.headers['content-disposition'] || ''
+  const match = disposition.match(/filename="?([^"]+)"?/)
+  const filename = match ? match[1] : `report-${id}.pdf`
+
+  const url = URL.createObjectURL(response.data)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+
+  return filename
+}
 
 // ---------------------------------------------------------------------------
 // Graph + companies
@@ -185,6 +223,12 @@ export const getGraph = (ringMembersOnly = true, runId) =>
     .then((r) => r.data)
 
 export const getCompany = (id) => client.get(`/companies/${id}/`).then((r) => r.data)
+
+/** Type-ahead lookup by name or GSTIN, used to generate a company report by hand. */
+export const searchCompanies = (search) =>
+  client
+    .get('/companies/', { params: { search, page_size: 8 } })
+    .then((r) => r.data.results)
 
 // ---------------------------------------------------------------------------
 // Ledger

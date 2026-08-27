@@ -289,13 +289,23 @@ class LedgerBlock(models.Model):
 
 class CaseReport(models.Model):
     """
-    A supervisor-facing summary of one detection run, and its delivery record.
+    A document generated for a supervisor, and its delivery record.
 
-    The workflow this exists for: an officer works through the alerts, confirms
-    or dismisses each one, then issues a report. The report goes to the officer
-    and to their supervisor by email, and its content hash is written to the
-    audit ledger - so the report a supervisor approved can later be proven to
-    be the report on file.
+    Two shapes share this one model, distinguished by `report_type`:
+
+      run      a summary of one detection run - the workflow this table was
+               built for. An officer works through the alerts, confirms or
+               dismisses each one, then issues this.
+      company  everything known about ONE flagged company: its registration
+               details, its trade totals, and why its score is what it is.
+               Generated on demand from the Network page, independent of any
+               officer decision - it is investigative material, not a verdict.
+
+    Both are rendered once as HTML (kept verbatim, so what was sent can always
+    be re-read exactly as it was), turned into a PDF on request, and their
+    content hash is written to the audit ledger the moment they are issued -
+    so a document a supervisor received can later be proven to be the
+    document on file, whichever shape it is.
     """
 
     STATUS_DRAFT = "draft"
@@ -307,8 +317,33 @@ class CaseReport(models.Model):
         (STATUS_FAILED, "Send failed"),
     ]
 
+    REPORT_TYPE_RUN = "run"
+    REPORT_TYPE_COMPANY = "company"
+    REPORT_TYPE_CHOICES = [
+        (REPORT_TYPE_RUN, "Detection run"),
+        (REPORT_TYPE_COMPANY, "Single company"),
+    ]
+
+    report_type = models.CharField(
+        max_length=16, choices=REPORT_TYPE_CHOICES, default=REPORT_TYPE_RUN
+    )
+
+    # Exactly one of these two is set, matching report_type. Both nullable
+    # because a company report has no run and a run report has no single
+    # company - there was never a third case that needed both.
     run = models.ForeignKey(
-        DetectionRun, on_delete=models.CASCADE, related_name="reports"
+        DetectionRun,
+        on_delete=models.CASCADE,
+        related_name="reports",
+        null=True,
+        blank=True,
+    )
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.CASCADE,
+        related_name="case_reports",
+        null=True,
+        blank=True,
     )
     title = models.CharField(max_length=200)
 

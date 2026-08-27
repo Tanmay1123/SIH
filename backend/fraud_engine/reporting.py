@@ -17,17 +17,31 @@ DESIGN CONSTRAINT: ONE PAGE
 
     Rendered as inline-styled HTML tables rather than a stylesheet, because
     that is the only layout that survives Outlook, Gmail and Apple Mail intact.
+    The same HTML is also the source for the PDF (render_pdf, below): one
+    document, two ways to look at it, never two things that could drift apart.
+
+WHY A COMPANY ALSO GETS ITS OWN REPORT
+    A run report is a supervisor's inbox document: dozens of cases, one page,
+    built for a five-minute read. It is the wrong shape when an officer is
+    looking at ONE flagged company and wants "why is this red, and what do we
+    know about it" as a single file they can save to a case folder or hand to
+    someone else. render_company_report_html builds that: the company's own
+    details plus the same SHAP-derived explanation sentences already shown in
+    the evidence panel, with nothing recomputed or reworded - it is a different
+    shape of the same evidence, not a second opinion.
 """
 from __future__ import annotations
 
 import hashlib
+import io
 from decimal import Decimal
 
+from django.db.models import Sum
 from django.utils import timezone
 
 from core.models import Company
 
-from .models import FlaggedRing
+from .models import CaseReport, FlaggedRing
 
 # --- palette: ink and brass, an audit document, not a dashboard ------------
 INK = "#141a24"
@@ -338,3 +352,397 @@ def plain_text_version(summary: dict, officer: str) -> str:
         "Every case was reviewed and confirmed by a named officer.",
     ]
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# PDF
+# ---------------------------------------------------------------------------
+
+
+def render_pdf(html: str) -> bytes:
+    """
+    Convert report HTML to a PDF: what gets viewed in-app, downloaded, and
+    attached to the email.
+
+    xhtml2pdf's built-in fonts have no glyph for the rupee sign - it prints as
+    a small black box instead of ₹. Everywhere else this codebase renders ₹
+    (the browser preview, the HTML email body) that is fine, because real
+    browsers and mail clients ship fonts that cover it. A generated PDF is not
+    a browser, so the swap to the ASCII "Rs." every Indian financial document
+    already falls back to happens only on this path - the HTML shown in the
+    app is untouched.
+    """
+    import logging
+
+    from xhtml2pdf import pisa
+
+    # xhtml2pdf warns, per call, about CSS it doesn't support (em-based
+    # letter-spacing, in this report's headings) and just ignores it - the
+    # PDF still renders correctly, only slightly less tracked-out than the
+    # HTML version. That is a cosmetic trade worth making for a pure-Python
+    # renderer; logging it as a warning on every single report generated is
+    # not, so it is quieted to errors only.
+    logging.getLogger("xhtml2pdf").setLevel(logging.ERROR)
+
+    pdf_ready_html = html.replace("₹", "Rs. ")
+    buffer = io.BytesIO()
+    result = pisa.CreatePDF(pdf_ready_html, dest=buffer)
+    if result.err:
+        raise RuntimeError(f"PDF generation failed ({result.err} error(s)).")
+    return buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Company report
+# ---------------------------------------------------------------------------
+
+
+def build_company_summary(company: Company) -> dict:
+    """
+    Everything a company report is built from: its own record, its trade
+    totals, its most recent risk assessment, and every alert it appears in.
+
+    Deliberately reads the same evidence the Network page's evidence panel
+    already shows (CompanyDetailSerializer in core/serializers.py) rather than
+    recomputing anything, so the PDF can never say something different from
+    what the officer already saw on screen before downloading it.
+    """
+    latest_score = company.risk_scores.order_by("-computed_at").first()
+
+    sales = company.sales_invoices.all()
+    purchases = company.purchase_invoices.all()
+    sales_value = sales.aggregate(total=Sum("amount"))["total"] or Decimal(0)
+    purchase_value = purchases.aggregate(total=Sum("amount"))["total"] or Decimal(0)
+
+    # Same Python-side filter CompanyDetailSerializer.get_rings uses: JSONField
+    # `contains` is PostgreSQL-only and would break the SQLite test path, and
+    # there are only ever tens of alerts per run, so filtering here costs
+    # nothing worth avoiding.
+    alerts_qs = FlaggedRing.objects.all()
+    if latest_score is not None and latest_score.run_id:
+        alerts_qs = alerts_qs.filter(run_id=latest_score.run_id)
+    alerts = [a for a in alerts_qs if company.id in (a.company_ids or [])]
+
+    reason_labels = dict(FlaggedRing.DISMISSAL_REASONS)
+
+    return {
+        "company_id": company.id,
+        "name": company.name,
+        "gstin": company.gstin,
+        "pan": company.pan,
+        "director_name": company.director_name,
+        "registered_address": company.registered_address,
+        "registered_date": company.registered_date.isoformat(),
+        "declared_turnover": str(company.declared_turnover),
+        "sales_count": sales.count(),
+        "sales_value": str(sales_value),
+        "purchase_count": purchases.count(),
+        "purchase_value": str(purchase_value),
+        "risk_score": round(latest_score.score, 2) if latest_score else None,
+        "risk_computed_at": latest_score.computed_at.isoformat() if latest_score else None,
+        "model_version": latest_score.run.model_version if latest_score and latest_score.run_id else None,
+        "risk_threshold": latest_score.run.risk_threshold if latest_score and latest_score.run_id else None,
+        "explanation": (latest_score.explanation if latest_score else []),
+        "alerts": [
+            {
+                "id": a.id,
+                "kind": a.get_kind_display(),
+                "closure": a.closure,
+                "risk_score": round(a.risk_score, 1),
+                "ring_size": a.ring_size,
+                "status": a.status,
+                "status_label": a.get_status_display(),
+                "dismissal_reason": reason_labels.get(a.dismissal_reason, ""),
+                "review_note": a.review_note,
+                "reviewed_by": a.reviewed_by.username if a.reviewed_by_id else None,
+            }
+            for a in sorted(alerts, key=lambda x: -x.risk_score)
+        ],
+    }
+
+
+def _company_stat_row(label: str, value: str) -> str:
+    return (
+        f'<tr><td style="font:400 12px {FONT};color:{MUTED};padding:3px 14px 3px 0;'
+        f'vertical-align:top;">{_esc(label)}</td>'
+        f'<td style="font:600 12.5px {FONT};color:{INK};padding:3px 0;">{_esc(value)}</td></tr>'
+    )
+
+
+def _company_explanation_html(explanation: list[dict]) -> str:
+    if not explanation:
+        return (
+            f'<div style="font:400 12.5px {FONT};color:{MUTED};padding:6px 0;">'
+            "This company was not a candidate in any circular-trade loop, so it was "
+            "never scored - there is no model explanation to show.</div>"
+        )
+    rows = []
+    for reason in explanation:
+        raises = reason.get("direction") == "increases_risk"
+        colour = DANGER if raises else GOOD
+        marker = "&#9650;" if raises else "&#9660;"  # ▲ / ▼, as ASCII-safe entities
+        rows.append(
+            f'<div style="padding:6px 0;border-bottom:1px solid {RULE};">'
+            f'<span style="font:700 11px {FONT};color:{colour};">{marker}</span> '
+            f'<span style="font:400 12.5px {FONT};color:{BODY};">{_esc(reason.get("text", ""))}</span>'
+            f"</div>"
+        )
+    return "".join(rows)
+
+
+def _company_alert_row(alert: dict) -> str:
+    status_colour = {
+        "confirmed": DANGER,
+        "dismissed": GOOD,
+        "pending": MUTED,
+    }.get(alert["status"], MUTED)
+    closure_note = (
+        " (closed by shared ownership)" if alert["closure"] == FlaggedRing.CLOSURE_CONTROL else ""
+    )
+    note = (
+        f'<div style="font:italic 11.5px {FONT};color:{MUTED};padding-top:3px;">'
+        f"{_esc(alert['dismissal_reason'] or alert['review_note'])}</div>"
+        if (alert["dismissal_reason"] or alert["review_note"])
+        else ""
+    )
+    return f"""
+    <tr>
+      <td style="padding:9px 0;border-bottom:1px solid {RULE};">
+        <div style="font:600 12.5px {FONT};color:{INK};">
+          {_esc(alert['kind'])} #{alert['id']}{closure_note} &nbsp;·&nbsp;
+          <span style="color:{status_colour};">{_esc(alert['status_label'])}</span>
+        </div>
+        <div style="font:400 11.5px {FONT};color:{MUTED};padding-top:2px;">
+          {alert['ring_size']} companies · risk {alert['risk_score']}
+        </div>
+        {note}
+      </td>
+    </tr>"""
+
+
+def render_company_report_html(summary: dict, officer: str) -> str:
+    """
+    One company, one document: its registration details, its trade totals,
+    why the model rated it the way it did, and every alert it has appeared in.
+
+    Same ink-and-brass palette and inline-table layout as the run report, for
+    the same reason - it has to render identically in a browser tab, a PDF,
+    and the handful of mail clients that still matter.
+    """
+    from .settings_helpers import organisation_name
+
+    org = organisation_name()
+    generated = timezone.localtime().strftime("%d %B %Y, %H:%M")
+
+    score = summary["risk_score"]
+    score_html = (
+        f'<span style="font:700 30px {FONT};color:{DANGER};">{score}</span>'
+        if score is not None
+        else f'<span style="font:600 16px {FONT};color:{MUTED};">Not scored</span>'
+    )
+
+    alerts_html = (
+        "".join(_company_alert_row(a) for a in summary["alerts"])
+        or f'<tr><td style="font:400 12.5px {FONT};color:{MUTED};padding:10px 0;">'
+           "This company does not appear in any flagged ring or mill.</td></tr>"
+    )
+
+    provenance = ""
+    if summary.get("model_version"):
+        provenance = (
+            f'Model version <span style="font-family:monospace;">{_esc(summary["model_version"])}</span> '
+            f'&nbsp;·&nbsp; high-risk threshold {summary["risk_threshold"]:.0f} &nbsp;·&nbsp; '
+        )
+
+    return f"""<div style="margin:0;padding:24px;background:{WASH};">
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:700px;margin:0 auto;background:#ffffff;border:1px solid {RULE};">
+  <tr>
+    <td style="padding:26px 30px 20px;border-bottom:2px solid {INK};">
+      <div style="font:700 10px {FONT};letter-spacing:.16em;text-transform:uppercase;color:{BRASS};padding-bottom:10px;">
+        {_esc(org)} · Company Report
+      </div>
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+        <tr>
+          <td style="vertical-align:top;">
+            <div style="font:600 23px {FONT};color:{INK};line-height:1.2;">{_esc(summary['name'])}</div>
+            <div style="font:400 12px {FONT};color:{MUTED};font-family:monospace;padding-top:4px;">
+              {_esc(summary['gstin'])}
+            </div>
+          </td>
+          <td width="110" style="vertical-align:top;text-align:right;">
+            {score_html}
+            <div style="font:400 10px {FONT};color:{MUTED};padding-top:2px;">RISK SCORE</div>
+          </td>
+        </tr>
+      </table>
+      <div style="font:400 12px {FONT};color:{MUTED};padding-top:9px;">
+        Issued {generated} &nbsp;·&nbsp; Requested by {_esc(officer)}
+      </div>
+    </td>
+  </tr>
+
+  <tr>
+    <td style="padding:20px 30px 0;">
+      <div style="font:700 10px {FONT};letter-spacing:.14em;text-transform:uppercase;color:{BRASS};padding-bottom:8px;">
+        Registration
+      </div>
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+        {_company_stat_row("PAN", summary['pan'])}
+        {_company_stat_row("Director", summary['director_name'])}
+        {_company_stat_row("Registered address", summary['registered_address'])}
+        {_company_stat_row("Registered on", summary['registered_date'])}
+        {_company_stat_row("Declared annual turnover", inr(summary['declared_turnover']))}
+      </table>
+    </td>
+  </tr>
+
+  <tr>
+    <td style="padding:18px 30px 0;">
+      <table role="presentation" cellpadding="0" cellspacing="0">
+        {_stat("Sales invoices", str(summary['sales_count']), INK)}
+        {_stat("Sold", inr(summary['sales_value']), INK)}
+        {_stat("Purchase invoices", str(summary['purchase_count']), INK)}
+        {_stat("Bought", inr(summary['purchase_value']), INK)}
+      </table>
+    </td>
+  </tr>
+
+  <tr>
+    <td style="padding:20px 30px 0;">
+      <div style="font:700 10px {FONT};letter-spacing:.14em;text-transform:uppercase;color:{BRASS};padding-bottom:2px;">
+        Why this score
+      </div>
+      {_company_explanation_html(summary['explanation'])}
+    </td>
+  </tr>
+
+  <tr>
+    <td style="padding:20px 30px 0;">
+      <div style="font:700 10px {FONT};letter-spacing:.14em;text-transform:uppercase;color:{BRASS};padding-bottom:2px;">
+        Appears in
+      </div>
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+        {alerts_html}
+      </table>
+    </td>
+  </tr>
+
+  <tr>
+    <td style="padding:22px 30px 26px;">
+      <div style="border-top:1px solid {RULE};padding-top:14px;font:400 11px {FONT};color:{MUTED};line-height:1.7;">
+        <strong style="color:{BODY};">Provenance.</strong>
+        {provenance}risk computed {_esc(summary['risk_computed_at'] or 'not yet computed')}.<br>
+        <em>Machine-assisted analysis. This document explains a risk score; it is not itself
+        a finding of fraud, and confirms nothing that a named officer has not confirmed.</em>
+      </div>
+    </td>
+  </tr>
+</table>
+</div>"""
+
+
+def plain_text_company_version(summary: dict, officer: str) -> str:
+    """Fallback body for mail clients that refuse HTML."""
+    lines = [
+        f"COMPANY REPORT — {summary['name']} ({summary['gstin']})",
+        f"Requested by: {officer}",
+        "",
+        f"Risk score           : {summary['risk_score'] if summary['risk_score'] is not None else 'not scored'}",
+        f"Director             : {summary['director_name']}",
+        f"Registered address   : {summary['registered_address']}",
+        f"Registered on        : {summary['registered_date']}",
+        f"Declared turnover    : {inr(summary['declared_turnover'])}",
+        f"Sales / purchases    : {summary['sales_count']} invoices sold "
+        f"({inr(summary['sales_value'])}) / {summary['purchase_count']} bought "
+        f"({inr(summary['purchase_value'])})",
+        "",
+        "WHY THIS SCORE",
+    ]
+    for reason in summary["explanation"]:
+        lines.append(f"  - {reason.get('text', '')}")
+    if not summary["explanation"]:
+        lines.append("  (not a candidate in any circular-trade loop)")
+    lines += ["", "APPEARS IN"]
+    for a in summary["alerts"]:
+        lines.append(f"  {a['kind']} #{a['id']} — {a['status_label']}, risk {a['risk_score']}")
+    if not summary["alerts"]:
+        lines.append("  (no flagged ring or mill)")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Cover email — the short note that carries the PDF attachment
+# ---------------------------------------------------------------------------
+
+
+def _cover_lead(report: CaseReport) -> str:
+    summary = report.summary or {}
+    if report.report_type == CaseReport.REPORT_TYPE_COMPANY:
+        score = summary.get("risk_score")
+        score_note = f"a risk score of {score}" if score is not None else "no risk score yet"
+        return (
+            f"Attached is the company report for <strong>{_esc(summary.get('name', ''))}</strong> "
+            f"({_esc(summary.get('gstin', ''))}), currently rated {score_note}. It sets out the "
+            "company's registration details, trade totals, and the evidence behind its score."
+        )
+    return (
+        f"Attached is the case report for <strong>{_esc(summary.get('run_name', report.title))}</strong>. "
+        f"Of {summary.get('alerts_total', 0)} alert(s) raised, "
+        f"<strong>{summary.get('confirmed_count', 0)} were confirmed as fraudulent</strong> and "
+        f"{summary.get('dismissed_count', 0)} were examined and cleared."
+    )
+
+
+def render_cover_email_html(report: CaseReport, officer: str) -> str:
+    """
+    The email BODY. Short, on purpose: the full document is the PDF attached
+    to it, not another copy of it pasted into the message. A supervisor
+    reading this on a phone should be able to tell in five seconds what it is
+    and who to ask about it, then open the attachment for the rest.
+    """
+    from .settings_helpers import organisation_name
+
+    org = organisation_name()
+    generated = timezone.localtime().strftime("%d %B %Y, %H:%M")
+
+    return f"""<div style="margin:0;padding:24px;background:{WASH};">
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid {RULE};">
+  <tr>
+    <td style="padding:24px 28px 18px;border-bottom:2px solid {INK};">
+      <div style="font:700 10px {FONT};letter-spacing:.16em;text-transform:uppercase;color:{BRASS};padding-bottom:8px;">
+        {_esc(org)}
+      </div>
+      <div style="font:600 18px {FONT};color:{INK};">{_esc(report.title)}</div>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:20px 28px;">
+      <div style="font:400 13.5px {FONT};color:{BODY};line-height:1.65;">{_cover_lead(report)}</div>
+      <div style="font:400 12px {FONT};color:{MUTED};padding-top:14px;">
+        Issued {generated} by {_esc(officer)}. The full report is attached as a PDF.
+      </div>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:16px 28px 22px;border-top:1px solid {RULE};">
+      <div style="font:400 10.5px {FONT};color:{MUTED};line-height:1.6;">
+        <em>Machine-assisted analysis, sent from {_esc(org)}'s GST fraud detection console.
+        The attached document's content is hashed into a tamper-evident audit ledger at the
+        moment it is issued.</em>
+      </div>
+    </td>
+  </tr>
+</table>
+</div>"""
+
+
+def plain_text_cover(report: CaseReport, officer: str) -> str:
+    if report.report_type == CaseReport.REPORT_TYPE_COMPANY:
+        summary = report.summary or {}
+        lead = (
+            f"Attached is the company report for {summary.get('name', '')} "
+            f"({summary.get('gstin', '')})."
+        )
+    else:
+        lead = f"Attached is the case report for {report.title}."
+    return f"{report.title}\n\n{lead}\n\nIssued by {officer}. See the attached PDF for the full report."

@@ -1,7 +1,6 @@
 import axios from 'axios'
 
 import { getToken } from '../api'
-import { API_BASE_URL } from '../config'
 
 /**
  * The lab talks to the API on its own.
@@ -12,8 +11,10 @@ import { API_BASE_URL } from '../config'
  * into the console - needs an account. A 401 from that one call is information
  * to show the user, not a session to tear down.
  */
+const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
+
 const client = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL,
   headers: { 'Content-Type': 'application/json' },
   // Generating a thousand companies and running the real detector over them is
   // seconds of honest work, not a hung request.

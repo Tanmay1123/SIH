@@ -68,70 +68,43 @@ export default function AppShell({ theme, onToggleTheme, status, onRefresh, pend
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem('codenova_nav_collapsed') === '1',
   )
-  // Below `lg` the rail cannot simply be narrower - 240px of a 375px phone is
-  // most of the screen. There it becomes a drawer that slides over the page,
-  // and `collapsed` stops applying: a drawer is either open or it isn't.
-  const [drawerOpen, setDrawerOpen] = useState(false)
   const location = useLocation()
 
   useEffect(() => {
     localStorage.setItem('codenova_nav_collapsed', collapsed ? '1' : '0')
   }, [collapsed])
 
-  // Navigating is the whole reason the drawer was opened, so close it on
-  // arrival rather than leaving it covering the page you just asked for.
-  useEffect(() => {
-    setDrawerOpen(false)
-  }, [location.pathname])
-
-  useEffect(() => {
-    if (!drawerOpen) return undefined
-    const onKey = (e) => e.key === 'Escape' && setDrawerOpen(false)
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [drawerOpen])
-
   const items = navItems(can)
   const current = items.find((i) => (i.end ? location.pathname === i.to : location.pathname.startsWith(i.to)))
 
   return (
     <div className="flex h-screen overflow-hidden bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-200">
-      {/* Drawer backdrop. Only ever present on small screens. */}
-      {drawerOpen && (
-        <div
-          onClick={() => setDrawerOpen(false)}
-          aria-hidden="true"
-          className="fixed inset-0 z-40 bg-zinc-950/50 backdrop-blur-sm lg:hidden"
-        />
-      )}
-
       {/* ---------------- navigation rail ---------------- */}
       <nav
         className={cx(
-          'fixed inset-y-0 left-0 z-50 flex shrink-0 flex-col border-r border-zinc-200 bg-white transition-transform duration-200 dark:border-zinc-800 dark:bg-zinc-900',
-          'lg:static lg:translate-x-0 lg:transition-[width]',
-          drawerOpen ? 'translate-x-0' : '-translate-x-full',
-          // The drawer always shows labels; only the desktop rail collapses.
-          collapsed ? 'w-60 lg:w-16' : 'w-60',
+          'flex shrink-0 flex-col border-r border-zinc-200 bg-white transition-[width] duration-200 dark:border-zinc-800 dark:bg-zinc-900',
+          collapsed ? 'w-16' : 'w-60',
         )}
       >
         <div
           className={cx(
-            'flex h-16 items-center gap-2.5 border-b border-zinc-200 px-4 dark:border-zinc-800',
-            collapsed && 'lg:justify-center lg:px-2',
+            'flex h-16 items-center gap-2.5 border-b border-zinc-200 dark:border-zinc-800',
+            collapsed ? 'justify-center px-2' : 'px-4',
           )}
         >
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white">
             <NetworkIcon className="h-4.5 w-4.5" />
           </span>
-          <span className={cx('min-w-0', collapsed && 'lg:hidden')}>
-            <span className="block truncate text-[13px] font-semibold leading-tight tracking-tight text-zinc-900 dark:text-zinc-50">
-              Circular-Trade
+          {!collapsed && (
+            <span className="min-w-0">
+              <span className="block truncate text-[13px] font-semibold leading-tight tracking-tight text-zinc-900 dark:text-zinc-50">
+                Circular-Trade
+              </span>
+              <span className="block truncate text-[10px] leading-tight text-zinc-500">
+                GST fraud detection
+              </span>
             </span>
-            <span className="block truncate text-[10px] leading-tight text-zinc-500">
-              GST fraud detection
-            </span>
-          </span>
+          )}
         </div>
 
         <div className="flex-1 space-y-0.5 overflow-y-auto p-2">
@@ -144,7 +117,7 @@ export default function AppShell({ theme, onToggleTheme, status, onRefresh, pend
               className={({ isActive }) =>
                 cx(
                   'relative flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors',
-                  collapsed && 'lg:justify-center lg:px-0',
+                  collapsed && 'justify-center px-0',
                   isActive
                     ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-50'
                     : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200',
@@ -157,14 +130,9 @@ export default function AppShell({ theme, onToggleTheme, status, onRefresh, pend
                     <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-brand-500" />
                   )}
                   <Icon className="h-4.5 w-4.5 shrink-0" />
-                  <span className={cx('truncate', collapsed && 'lg:hidden')}>{label}</span>
-                  {to === '/network' && pendingCount > 0 && (
-                    <span
-                      className={cx(
-                        'ml-auto rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/60 dark:text-amber-300',
-                        collapsed && 'lg:hidden',
-                      )}
-                    >
+                  {!collapsed && <span className="truncate">{label}</span>}
+                  {!collapsed && to === '/network' && pendingCount > 0 && (
+                    <span className="ml-auto rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/60 dark:text-amber-300">
                       {pendingCount}
                     </span>
                   )}
@@ -186,50 +154,41 @@ export default function AppShell({ theme, onToggleTheme, status, onRefresh, pend
             title="Dataset Lab - generate fabricated test data (opens in a new tab)"
             className={cx(
               'mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-800 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200',
-              collapsed && 'lg:justify-center lg:px-0',
+              collapsed && 'justify-center px-0',
             )}
           >
             <FlaskIcon className="h-4.5 w-4.5 shrink-0" />
-            <span className={cx('truncate', collapsed && 'lg:hidden')}>Dataset lab</span>
-            <span
-              aria-hidden
-              className={cx('ml-auto text-[10px] text-zinc-400', collapsed && 'lg:hidden')}
-            >
-              ↗
-            </span>
+            {!collapsed && (
+              <>
+                <span className="truncate">Dataset lab</span>
+                <span aria-hidden className="ml-auto text-[10px] text-zinc-400">↗</span>
+              </>
+            )}
           </a>
-          <div className={cx('mb-2 px-2', collapsed && 'lg:hidden')}>
-            <Badge tone={isSupervisor ? 'good' : 'neutral'}>
-              {isSupervisor ? 'Supervisor access' : 'Officer access'}
-            </Badge>
-          </div>
-          {/* Collapsing is a desktop affordance: on a phone the rail is a
-              drawer, and a half-width drawer helps nobody. */}
+          {!collapsed && (
+            <div className="mb-2 px-2">
+              <Badge tone={isSupervisor ? 'good' : 'neutral'}>
+                {isSupervisor ? 'Supervisor access' : 'Officer access'}
+              </Badge>
+            </div>
+          )}
           <button
             onClick={() => setCollapsed((v) => !v)}
             title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
             className={cx(
-              'hidden w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-800 lg:flex dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200',
-              collapsed && 'lg:justify-center lg:px-0',
+              'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-800 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200',
+              collapsed && 'justify-center px-0',
             )}
           >
             <MenuIcon className="h-4.5 w-4.5 shrink-0" />
-            <span className={cx(collapsed && 'lg:hidden')}>Collapse</span>
+            {!collapsed && <span>Collapse</span>}
           </button>
         </div>
       </nav>
 
       {/* ---------------- content ---------------- */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-16 shrink-0 items-center gap-2 border-b border-zinc-200 bg-white px-3 sm:gap-3 sm:px-5 dark:border-zinc-800 dark:bg-zinc-900">
-          <button
-            onClick={() => setDrawerOpen(true)}
-            aria-label="Open navigation"
-            className="-ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 lg:hidden dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-          >
-            <MenuIcon className="h-5 w-5" />
-          </button>
-
+        <header className="flex h-16 shrink-0 items-center gap-3 border-b border-zinc-200 bg-white px-5 dark:border-zinc-800 dark:bg-zinc-900">
           <div className="min-w-0">
             <h1 className="truncate text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
               {current?.label || 'Console'}
@@ -241,15 +200,10 @@ export default function AppShell({ theme, onToggleTheme, status, onRefresh, pend
             </p>
           </div>
 
-          <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
-            {/* The picker's menu needs more width than a phone has; the same
-                datasets are reachable from Detections, so hide it rather than
-                ship a cramped one. */}
-            <span className="hidden sm:block">
-              <DatasetPicker activeId={status?.dataset?.id} onChanged={onRefresh} />
-            </span>
+          <div className="ml-auto flex items-center gap-2">
+            <DatasetPicker activeId={status?.dataset?.id} onChanged={onRefresh} />
             <ThemeToggle theme={theme} onToggle={onToggleTheme} />
-            <span className="mx-1 hidden h-6 w-px bg-zinc-200 sm:block dark:bg-zinc-800" />
+            <span className="mx-1 h-6 w-px bg-zinc-200 dark:bg-zinc-800" />
             <UserMenu />
           </div>
         </header>
